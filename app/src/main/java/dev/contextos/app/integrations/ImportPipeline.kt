@@ -8,6 +8,8 @@ import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.label.ImageLabeling
+import com.google.mlkit.vision.label.defaults.ImageLabelerOptions
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
@@ -117,12 +119,24 @@ class ImportPipeline(private val context: Context) {
 
     suspend fun readSelectedPhoto(uri: Uri): KnowledgeEntry = withContext(Dispatchers.IO) {
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        val labeler = ImageLabeling.getClient(ImageLabelerOptions.DEFAULT_OPTIONS)
         try {
             val image = InputImage.fromFilePath(context, uri)
             val recognized = recognizer.process(image).await().text.trim()
-            require(recognized.isNotBlank()) { "No text recognized in the selected image." }
-            KnowledgeEntry(title = "Photo OCR: " + title(uri), body = recognized.take(16000),
-                source = "Selected photo (offline OCR)", category = "DOCUMENT")
-        } finally { recognizer.close() }
+            val labels = labeler.process(image).await().filter { it.confidence >= 0.6f }
+                .take(8).joinToString(", ") { it.text }
+            require(recognized.isNotBlank() || labels.isNotBlank()) {
+                "No local text or recognizable objects found in the selected image."
+            }
+            KnowledgeEntry(title = "Selected photo: " + title(uri),
+                body = ("Visible labels (automatic estimates): " + labels +
+                    if (recognized.isBlank()) "" else "\nExtracted visible text: " + recognized)
+                    .take(16000),
+                source = "User-selected photo · on-device OCR and image labels",
+                category = "DOCUMENT")
+        } finally {
+            recognizer.close()
+            labeler.close()
+        }
     }
 }
