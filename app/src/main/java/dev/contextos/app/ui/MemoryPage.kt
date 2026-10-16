@@ -28,7 +28,8 @@ fun MemoryPage(
     delete: (String) -> Unit,
     clearAll: () -> Unit,
     export: () -> Unit,
-    setChatConsent: (Boolean) -> Unit
+    setChatConsent: (Boolean) -> Unit,
+    modelIdle: Boolean
 ) {
     val color = MaterialTheme.colorScheme
     var draft by rememberSaveable { mutableStateOf("") }
@@ -38,7 +39,7 @@ fun MemoryPage(
     if (confirmClear) AlertDialog(
         onDismissRequest = { confirmClear = false },
         title = { Text("Delete all private memories?") },
-        text = { Text("This overwrites the encrypted vault with an empty one. It cannot be undone.") },
+        text = { Text("This overwrites the encrypted vault with an empty one and resets the current chat if memory was enabled. It cannot be undone.") },
         confirmButton = {
             TextButton(onClick = { clearAll(); confirmClear = false }) { Text("Delete all") }
         },
@@ -100,13 +101,13 @@ fun MemoryPage(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Use matching memories in local chat", fontWeight = FontWeight.Medium)
-                        Text("Off by default. Only relevant saved notes are attached to messages you send. Never sent to a server.",
+                        Text("Off by default. Only matching notes are attached when you send a local message. Turning this off resets the current chat.",
                             style = MaterialTheme.typography.bodySmall, color = color.onSurfaceVariant)
                     }
                     Spacer(Modifier.width(8.dp))
                     Switch(
                         checked = state.includeInChat, onCheckedChange = setChatConsent,
-                        enabled = !state.loading && state.error == null
+                        enabled = !state.loading && state.error == null && modelIdle
                     )
                 }
             }
@@ -126,7 +127,7 @@ fun MemoryPage(
                 enabled = state.notes.isNotEmpty() && !state.loading && !state.busy && state.error == null
             ) { Icon(Icons.Default.FileDownload, contentDescription = "Export memories") }
             IconButton(onClick = { confirmClear = true },
-                enabled = !state.loading && !state.busy && (state.notes.isNotEmpty() || state.error != null)
+                enabled = modelIdle && !state.loading && !state.busy && (state.notes.isNotEmpty() || state.error != null)
             ) { Icon(Icons.Default.DeleteOutline, contentDescription = "Delete all memories") }
         }
 
@@ -147,7 +148,7 @@ fun MemoryPage(
                                 .format(Date(note.createdAtMs)),
                                 style = MaterialTheme.typography.labelSmall, color = color.onSurfaceVariant)
                         }
-                        IconButton(onClick = { delete(note.id) }, enabled = !state.busy) {
+                        IconButton(onClick = { delete(note.id) }, enabled = modelIdle && !state.busy && state.error == null) {
                             Icon(Icons.Default.DeleteOutline, contentDescription = "Delete memory")
                         }
                     }
