@@ -106,7 +106,7 @@ class MainActivity : ComponentActivity() {
             val ai by assistant.state.collectAsStateWithLifecycle()
             val context by contextModel.state.collectAsStateWithLifecycle()
             val memories by memoryModel.state.collectAsStateWithLifecycle()
-            var tab by remember { mutableStateOf(Destination.HOME) }
+            var tab by remember { mutableStateOf(if (intent.hasExtra("voice_prompt")) Destination.CHAT else Destination.HOME) }
             DisposableEffect(tab) {
                 if (tab == Destination.CONTEXT) contextModel.onVisible() else contextModel.onHidden()
                 onDispose { contextModel.onHidden() }
@@ -114,6 +114,7 @@ class MainActivity : ComponentActivity() {
             ContextOsTheme(settings) {
                 ContextApp(
                     tab = tab, navigate = { tab = it }, ai = ai, context = context,
+                    prefillChat = intent.getStringExtra("voice_prompt").orEmpty(),
                     memory = memories, appearance = settings, insightSettings = suggestionSettings,
                     requestSuggestionNotifications = { enabled ->
                         if (!enabled) {
@@ -197,6 +198,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun ContextApp(
     tab: Destination, navigate: (Destination) -> Unit,
+    prefillChat: String,
     ai: AssistantState, context: ContextState, memory: MemoryState, appearance: AppearanceSettings,
     insightSettings: InsightPreferences, requestSuggestionNotifications: (Boolean) -> Unit,
     explainSuggestion: (DeviceInsight) -> Unit,
@@ -270,7 +272,7 @@ private fun ContextApp(
                     openMemory = { navigate(Destination.MEMORY) }, savedMemories = memory.notes.size,
                     insightSettings = insightSettings,
                     explainSuggestion = { insight -> explainSuggestion(insight); if (ai.initialized && !ai.busy && !ai.generating) navigate(Destination.CHAT) })
-                Destination.CHAT -> ChatPage(ai, send, importModel, loadModel, newChat, clearError, keyboardVisible)
+                Destination.CHAT -> ChatPage(ai, send, importModel, loadModel, newChat, clearError, keyboardVisible, prefillChat)
                 Destination.CONTEXT -> ContextPage(context, toggleSensors, requestSteps, activityAllowed,
                     requestLocation, usageAllowed, requestUsage, saveSnapshot, clearHistory)
                 Destination.MEMORY -> MemoryPage(memory, addMemory, editMemory, removeMemory,
@@ -476,10 +478,11 @@ private fun SectionTitle(title: String, hint: String? = null) {
 @Composable
 private fun ChatPage(
     state: AssistantState, send: (String) -> Unit, importModel: () -> Unit, loadModel: () -> Unit,
-    newChat: () -> Unit, clearError: () -> Unit, keyboardVisible: Boolean
+    newChat: () -> Unit, clearError: () -> Unit, keyboardVisible: Boolean,
+    prefill: String
 ) {
     val scheme = MaterialTheme.colorScheme
-    var draft by rememberSaveable { mutableStateOf("") }
+    var draft by rememberSaveable(prefill) { mutableStateOf(prefill) }
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
     val focusRequester = remember { FocusRequester() }
