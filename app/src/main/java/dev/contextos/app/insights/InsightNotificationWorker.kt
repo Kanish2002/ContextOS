@@ -17,7 +17,6 @@ import androidx.work.Worker
 import androidx.work.WorkerParameters
 import androidx.work.WorkManager
 import dev.contextos.app.MainActivity
-import dev.contextos.app.R
 import java.util.concurrent.TimeUnit
 
 /**
