@@ -59,9 +59,9 @@ class InsightPreferences(context: Context) {
 
     fun notificationCandidate(now: Long): String? {
         val at = prefs.getLong("last_insight_at", 0L)
-        if (at <= 0 || now - at !in 0..86_400_000L) return null
+        if (at <= 0 || now - at !in 0..604_800_000L) return null
         val id = prefs.getString("last_insight_id", null) ?: return null
-        if (feedback(id) == InsightFeedback.NOT_HELPFUL) return null
+        if (feedback(id) != InsightFeedback.HELPFUL) return null
         return prefs.getString("last_insight_title", null)
     }
 
