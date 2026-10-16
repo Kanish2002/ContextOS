@@ -156,25 +156,7 @@ class IntegrationsActivity : ComponentActivity() {
                     route = ::openRoute, routeResult = routeResult,
                     commuteDeparture = commuteDeparture,
                     saveCommuteReminder = { destinationName, departureMs ->
-                        try {
-                            check(deadlineAlerts && library.state.value.agentEnabled) {
-                                "Enable both local agent and deadline notifications first."
-                            }
-                            val entry = KnowledgeEntry(
-                                title = ("Planned commute to " + destinationName).take(150),
-                                body = "Reminder from a user-approved traffic estimate. Recheck traffic before leaving.",
-                                source = "User-approved commute plan",
-                                category = "COMMUTE_PLAN",
-                                dueAt = departureMs,
-                                location = destinationName.take(200)
-                            )
-                            CommuteReminderScheduler.schedule(this, entry.id, departureMs)
-                            library.savePreview(entry)
-                            notice = "Scheduled an inexact leave-by reminder; destination stored encrypted."
-                        } catch (e: Exception) {
-                            notice = "Could not schedule leave-by reminder: " +
-                                (e.message ?: "Unknown error").take(150)
-                        }
+                        library.saveCommuteReminder(destinationName, departureMs)
                     },
                     estimateRoute = { from, to, apiKey, arrival, buffer ->
                         lifecycleScope.launch {
