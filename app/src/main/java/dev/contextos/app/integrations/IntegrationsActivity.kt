@@ -50,6 +50,7 @@ class IntegrationsActivity : ComponentActivity() {
     private var healthSummary by mutableStateOf("")
     private var cloudResult by mutableStateOf("")
     private var routeResult by mutableStateOf("")
+    private var commuteDeparture by mutableStateOf<Long?>(null)
     private var deadlineAlerts by mutableStateOf(false)
     private var onDeviceRecognizer: SpeechRecognizer? = null
     private val microphonePermission = registerForActivityResult(
@@ -153,8 +154,31 @@ class IntegrationsActivity : ComponentActivity() {
                             .putExtra("voice_prompt", spoken))
                     },
                     route = ::openRoute, routeResult = routeResult,
+                    commuteDeparture = commuteDeparture,
+                    saveCommuteReminder = { destinationName, departureMs ->
+                        try {
+                            check(deadlineAlerts && library.state.value.agentEnabled) {
+                                "Enable both local agent and deadline notifications first."
+                            }
+                            val entry = KnowledgeEntry(
+                                title = ("Planned commute to " + destinationName).take(150),
+                                body = "Reminder from a user-approved traffic estimate. Recheck traffic before leaving.",
+                                source = "User-approved commute plan",
+                                category = "COMMUTE_PLAN",
+                                dueAt = departureMs,
+                                location = destinationName.take(200)
+                            )
+                            CommuteReminderScheduler.schedule(this, entry.id, departureMs)
+                            library.savePreview(entry)
+                            notice = "Scheduled an inexact leave-by reminder; destination stored encrypted."
+                        } catch (e: Exception) {
+                            notice = "Could not schedule leave-by reminder: " +
+                                (e.message ?: "Unknown error").take(150)
+                        }
+                    },
                     estimateRoute = { from, to, apiKey, arrival, buffer ->
                         lifecycleScope.launch {
+                            commuteDeparture = null
                             routeResult = "Requesting live route (user initiated)..."
                             try {
                                 val result = LiveRoutePlanner.estimate(from, to, apiKey)
@@ -164,9 +188,16 @@ class IntegrationsActivity : ComponentActivity() {
                                         .atZone(java.time.ZoneId.systemDefault())
                                         .toInstant().toEpochMilli()
                                 }.getOrNull()
-                                val departure = saved?.let {
-                                    java.time.Instant.ofEpochMilli(LiveRoutePlanner.leaveByMillis(
-                                        it, result.travelSeconds, buffer.coerceIn(0, 120)))
+                                val departAt = saved?.let {
+                                    LiveRoutePlanner.leaveByMillis(
+                                        it, result.travelSeconds, buffer.coerceIn(0, 120))
+                                }
+                                commuteDeparture = departAt?.takeIf {
+                                    it > System.currentTimeMillis() &&
+                                        it - System.currentTimeMillis() <= 14L * 24 * 60 * 60 * 1000
+                                }
+                                val departure = departAt?.let {
+                                    java.time.Instant.ofEpochMilli(it)
                                         .atZone(java.time.ZoneId.systemDefault()).toLocalDateTime()
                                 }
                                 val delay = LiveRoutePlanner.delayMinutes(
@@ -340,6 +371,7 @@ private fun IntegrationsScreen(
     voice: () -> Unit, askOffline: (String) -> Unit,
     route: (String) -> Unit,
     routeResult: String,
+    commuteDeparture: Long?, saveCommuteReminder: (String, Long) -> Unit,
     estimateRoute: (String, String, String, String, Int) -> Unit,
     remote: (String, String, String, String) -> Unit
 ) {
@@ -584,6 +616,16 @@ private fun IntegrationsScreen(
                 Text("Calculate traffic-aware route")
             }
             if (routeResult.isNotBlank()) Text(routeResult, style = MaterialTheme.typography.bodySmall)
+            if (commuteDeparture != null) {
+                OutlinedButton(
+                    onClick = { saveCommuteReminder(destination, commuteDeparture) },
+                    enabled = state.agentEnabled && agentReminders
+                ) { Text("Save leave-by reminder (inexact)") }
+                if (!state.agentEnabled || !agentReminders) {
+                    Text("Enable local agent and opt-in notifications below to save a departure reminder.",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            }
             Text("Live route uses Google Routes API only after you tap Calculate. Address details leave your phone; a user-provided API key with Routes API and billing enabled is required.",
                 style = MaterialTheme.typography.bodySmall)
         }
