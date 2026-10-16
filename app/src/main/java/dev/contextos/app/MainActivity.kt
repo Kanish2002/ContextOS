@@ -45,6 +45,9 @@ import dev.contextos.app.insights.InsightInput
 import dev.contextos.app.context.ContextState
 import dev.contextos.app.context.ContextViewModel
 import dev.contextos.app.model.*
+import dev.contextos.app.memory.MemoryState
+import dev.contextos.app.memory.MemoryViewModel
+import dev.contextos.app.ui.MemoryPage
 import dev.contextos.app.ui.AppearanceSettings
 import dev.contextos.app.ui.ContextOsTheme
 import dev.contextos.app.ui.ThemeChoice
@@ -52,13 +55,17 @@ import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
 
-private enum class Destination(val title: String) { HOME("Home"), CHAT("Chat"), CONTEXT("Context"), SETTINGS("Settings") }
+private enum class Destination(val title: String) { HOME("Home"), CHAT("Chat"), CONTEXT("Context"), MEMORY("Memory"), SETTINGS("Settings") }
 
 class MainActivity : ComponentActivity() {
     private val assistant: AssistantViewModel by viewModels()
     private val contextModel: ContextViewModel by viewModels()
+    private val memoryModel: MemoryViewModel by viewModels()
     private val modelPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(assistant::importModel)
+    }
+    private val memoryExporter = registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+        uri?.let(memoryModel::exportPlaintext)
     }
     private val activityPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         contextModel.refreshPermissions()
@@ -75,6 +82,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val ai by assistant.state.collectAsStateWithLifecycle()
             val context by contextModel.state.collectAsStateWithLifecycle()
+            val memories by memoryModel.state.collectAsStateWithLifecycle()
             var tab by remember { mutableStateOf(Destination.HOME) }
             DisposableEffect(tab) {
                 if (tab == Destination.CONTEXT) contextModel.onVisible() else contextModel.onHidden()
@@ -83,12 +91,13 @@ class MainActivity : ComponentActivity() {
             ContextOsTheme(settings) {
                 ContextApp(
                     tab = tab, navigate = { tab = it }, ai = ai, context = context,
-                    appearance = settings,
+                    memory = memories, appearance = settings,
                     importModel = { modelPicker.launch(arrayOf("*/*")) },
                     loadModel = assistant::loadModel, selectBackend = assistant::chooseBackend,
                     send = { prompt ->
                         assistant.send(prompt,
-                            if (settings.shareContextWithChat) contextModel.currentSummary() else null)
+                            if (settings.shareContextWithChat) contextModel.currentSummary() else null,
+                            memoryModel.recallForPrompt(prompt))
                     },
                     newChat = assistant::newChat, clearError = assistant::clearError,
                     toggleSensors = contextModel::setSensorsEnabled,
@@ -107,7 +116,11 @@ class MainActivity : ComponentActivity() {
                         else startActivity(contextModel.usageSettingsIntent())
                     },
                     saveSnapshot = contextModel::saveSnapshot,
-                    clearHistory = contextModel::clearHistory
+                    clearHistory = contextModel::clearHistory,
+                    addMemory = memoryModel::add, removeMemory = memoryModel::remove,
+                    clearMemories = memoryModel::clearAll,
+                    exportMemories = { memoryExporter.launch("ContextOS-private-memories.txt") },
+                    setMemoryChatConsent = memoryModel::updateChatConsent
                 )
             }
         }
@@ -117,12 +130,15 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun ContextApp(
     tab: Destination, navigate: (Destination) -> Unit,
-    ai: AssistantState, context: ContextState, appearance: AppearanceSettings,
+    ai: AssistantState, context: ContextState, memory: MemoryState, appearance: AppearanceSettings,
     importModel: () -> Unit, loadModel: () -> Unit, selectBackend: (DeviceBackend) -> Unit,
     send: (String) -> Unit, newChat: () -> Unit, clearError: () -> Unit,
     toggleSensors: (Boolean) -> Unit, requestSteps: () -> Unit, activityAllowed: Boolean,
     requestLocation: () -> Unit, usageAllowed: Boolean, requestUsage: () -> Unit,
-    saveSnapshot: () -> Unit, clearHistory: () -> Unit
+    saveSnapshot: () -> Unit, clearHistory: () -> Unit,
+    addMemory: (String) -> Unit, removeMemory: (String) -> Unit,
+    clearMemories: () -> Unit, exportMemories: () -> Unit,
+    setMemoryChatConsent: (Boolean) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
@@ -136,6 +152,7 @@ private fun ContextApp(
                         Destination.HOME -> Icons.Default.Home
                         Destination.CHAT -> Icons.Default.Forum
                         Destination.CONTEXT -> Icons.Default.Sensors
+                        Destination.MEMORY -> Icons.Default.Bookmarks
                         Destination.SETTINGS -> Icons.Default.Tune
                     }
                     NavigationBarItem(
@@ -158,7 +175,7 @@ private fun ContextApp(
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text("ContextOS", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("Private by design · Phase 3",
+                    Text("Private by design · Phase 4",
                         style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant)
                 }
                 if (tab == Destination.CHAT) {
@@ -177,10 +194,13 @@ private fun ContextApp(
         Box(Modifier.fillMaxSize().padding(padding).imePadding()) {
             when (tab) {
                 Destination.HOME -> HomePage(ai, context, appearance, openChat = { navigate(Destination.CHAT) },
-                    openContext = { navigate(Destination.CONTEXT) })
+                    openContext = { navigate(Destination.CONTEXT) },
+                    openMemory = { navigate(Destination.MEMORY) }, savedMemories = memory.notes.size)
                 Destination.CHAT -> ChatPage(ai, send, importModel, loadModel, newChat, clearError, keyboardVisible)
                 Destination.CONTEXT -> ContextPage(context, toggleSensors, requestSteps, activityAllowed,
                     requestLocation, usageAllowed, requestUsage, saveSnapshot, clearHistory)
+                Destination.MEMORY -> MemoryPage(memory, addMemory, removeMemory,
+                    clearMemories, exportMemories, setMemoryChatConsent)
                 Destination.SETTINGS -> SettingsPage(appearance, ai, importModel, loadModel, selectBackend, clearHistory)
             }
         }
@@ -188,7 +208,11 @@ private fun ContextApp(
 }
 
 @Composable
-private fun HomePage(ai: AssistantState, context: ContextState, appearance: AppearanceSettings, openChat: () -> Unit, openContext: () -> Unit) {
+private fun HomePage(
+    ai: AssistantState, context: ContextState, appearance: AppearanceSettings,
+    openChat: () -> Unit, openContext: () -> Unit,
+    openMemory: () -> Unit, savedMemories: Int
+) {
     val scheme = MaterialTheme.colorScheme
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
@@ -220,6 +244,20 @@ private fun HomePage(ai: AssistantState, context: ContextState, appearance: Appe
             }
         }
         InsightsSection(context, appearance, openContext)
+        Surface(onClick = openMemory, color = scheme.surfaceContainerLow,
+            shape = RoundedCornerShape(21.dp), modifier = Modifier.fillMaxWidth()) {
+            Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Bookmarks, null, tint = scheme.primary, modifier = Modifier.size(25.dp))
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Private memory", fontWeight = FontWeight.SemiBold)
+                    Text(if (savedMemories == 0) "Save preferences and facts on your device"
+                         else savedMemories.toString() + " saved encrypted memories",
+                        color = scheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                }
+                Icon(Icons.Default.ChevronRight, null, tint = scheme.onSurfaceVariant)
+            }
+        }
         SectionTitle("Your signals", "Live when you enable a source")
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             MetricTile("Movement", context.motionLabel.takeIf { context.sensing } ?: "Off", Icons.Default.DirectionsWalk,
