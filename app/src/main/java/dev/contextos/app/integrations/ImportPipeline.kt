@@ -6,6 +6,7 @@ import android.provider.OpenableColumns
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
+import com.tom_roush.pdfbox.rendering.PDFRenderer
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.label.ImageLabeling
@@ -99,7 +100,10 @@ class ImportPipeline(private val context: Context) {
             "pdf" -> {
                 PDFBoxResourceLoader.init(context)
                 PDDocument.load(bytes).use { pdf ->
-                    PDFTextStripper().apply { endPage = minOf(pdf.numberOfPages, 80) }.getText(pdf)
+                    val extracted = PDFTextStripper().apply {
+                        endPage = minOf(pdf.numberOfPages, 80)
+                    }.getText(pdf)
+                    if (extracted.isNotBlank()) extracted else ocrScannedPdf(pdf)
                 }
             }
             else -> String(bytes, Charsets.UTF_8).let {
@@ -121,6 +125,32 @@ class ImportPipeline(private val context: Context) {
             KnowledgeEntry(title = filename + if (index > 0) " (part " + (index + 1) + ")" else "",
                 body = chunk, source = "Selected file", category = "DOCUMENT")
         }
+    }
+
+    /**
+     * OCR fallback only when a selected PDF has no extractable text layer.
+     * Hard cap of 5 pages and 4M pixels per page to avoid unbounded mobile RAM use.
+     */
+    private suspend fun ocrScannedPdf(pdf: PDDocument): String {
+        val engine = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        val renderer = PDFRenderer(pdf)
+        val pages = mutableListOf<String>()
+        try {
+            for (index in 0 until minOf(5, pdf.numberOfPages)) {
+                val bounds = pdf.getPage(index).mediaBox
+                val width = (bounds.width * 96f / 72f).toInt()
+                val height = (bounds.height * 96f / 72f).toInt()
+                if (width <= 0 || height <= 0 || width.toLong() * height > 4_000_000L)
+                    continue
+                val bitmap = renderer.renderImageWithDPI(index, 96f)
+                try {
+                    val words = engine.process(InputImage.fromBitmap(bitmap, 0))
+                        .await().text.trim()
+                    if (words.isNotBlank()) pages += "Page " + (index + 1) + ":\n" + words
+                } finally { bitmap.recycle() }
+            }
+        } finally { engine.close() }
+        return pages.joinToString("\n\n").take(12 * KnowledgeSearch.MAX_TEXT)
     }
 
     suspend fun readSelectedPhoto(uri: Uri): KnowledgeEntry = withContext(Dispatchers.IO) {
