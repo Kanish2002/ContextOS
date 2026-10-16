@@ -39,6 +39,15 @@ class InsightPreferences(context: Context) {
         revision++
     }
 
+    fun resetFeedback() {
+        listOf("light", "focus", "move", "steps", "review", "check-in").forEach { id ->
+            prefs.edit().remove("feedback_$id").apply()
+        }
+        prefs.edit().remove("last_insight_id").remove("last_insight_title")
+            .remove("last_insight_at").apply()
+        revision++
+    }
+
     fun applyFeedback(input: List<DeviceInsight>): List<DeviceInsight> {
         revision // Observe preference changes inside Compose.
         return input.filter { feedback(it.id) != InsightFeedback.NOT_HELPFUL }
