@@ -57,7 +57,7 @@ object LiveRoutePlanner {
                     "Routes request failed (HTTP " + conn.responseCode +
                         "). Confirm Routes API, billing, and API key restrictions."
                 }
-                val bytes = conn.inputStream.use { it.readNBytes(120_001) }
+                val bytes = conn.inputStream.use { it.readBoundedBytes(120_000) }
                 check(bytes.size <= 120_000) { "Routes reply exceeds size limit." }
                 val route = JSONObject(String(bytes, Charsets.UTF_8))
                     .getJSONArray("routes").getJSONObject(0)
