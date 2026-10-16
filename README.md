@@ -119,3 +119,14 @@ appeared; there is no AI inference for insights, background tracking, or network
 Android edge-to-edge/IME fixes keep the chat composer visible while Gboard is open
 and prevent the toolbar overlapping status bar content on Android 15.
 See [PHASE3.md](PHASE3.md) for the detailed scope, remaining work and device QA.
+
+
+## Phase 4 preview — encrypted personal memory
+
+Phase 4 starts on the `feature/phase4-encrypted-personal-memory` branch.
+Save private user-authored notes in an Android Keystore-backed AES-GCM vault,
+inspect/delete/export them through the Memory tab, and *separately opt in* to
+retrieving only matching notes when you send local AI chat messages.
+Retrieval is deterministic, keyword-based, and bounded; **semantic embeddings and
+automatic summaries are not yet implemented**. No network permissions were added.
+See [PHASE4.md](PHASE4.md) for exact guarantees, limitations and QA.
