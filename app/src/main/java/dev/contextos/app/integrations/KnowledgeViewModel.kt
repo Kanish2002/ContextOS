@@ -161,7 +161,7 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 append(listOf(entry), "Leave-by plan saved with encryption.")
                 // Schedule only after the encrypted archive write succeeds.
-                CommuteReminderScheduler.schedule(getApplication(), entry.id, departureMs)
+                CommuteReminderScheduler.schedule(getApplication<Application>(), entry.id, departureMs)
                 _state.update { it.copy(message =
                     "Inexact leave-by reminder requested. Android may delay delivery.") }
             } catch (failure: Exception) {
