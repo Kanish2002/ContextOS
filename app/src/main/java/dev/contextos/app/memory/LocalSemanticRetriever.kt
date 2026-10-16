@@ -66,10 +66,10 @@ class LocalSemanticRetriever(private val app: Context) {
             try {
                 val lexical = MemoryPolicy.matching(prompt, notes).map { it.id }.toSet()
                 TextEmbedder.createFromFile(app, destination).use { engine ->
-                    val query = engine.embed(prompt).embeddings().first()
+                    val query = engine.embed(prompt).embeddingResult().embeddings().first()
                     val ranked = notes.mapNotNull { note ->
                         val vec = cache[note.id]?.takeIf { it.first == note.text }?.second
-                            ?: engine.embed(note.text).embeddings().first().also {
+                            ?: engine.embed(note.text).embeddingResult().embeddings().first().also {
                                 cache[note.id] = note.text to it
                             }
                         val score = TextEmbedder.cosineSimilarity(query, vec)
