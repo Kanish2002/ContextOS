@@ -124,8 +124,8 @@ class GoogleGateway(private val activity: Activity) {
         try {
             if (connection.responseCode !in 200..299)
                 error("Google returned HTTP " + connection.responseCode + "; check API configuration and consent.")
-            val bytes = connection.inputStream.use { it.readNBytes(256 * 1024) }
-            return JSONObject(String(bytes, Charsets.UTF_8))
+            val body = connection.inputStream.bufferedReader().use { it.readText().take(256 * 1024) }
+            return JSONObject(body)
         } finally { connection.disconnect() }
     }
 }
