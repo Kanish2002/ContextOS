@@ -23,17 +23,21 @@ data class KnowledgeState(
     val message: String = "Unlocking offline knowledge archive",
     val query: String = "",
     val includeInChat: Boolean = false,
-    val agentEnabled: Boolean = false
+    val agentEnabled: Boolean = false,
+    val semanticAvailable: Boolean = false,
+    val searchingSemantic: Boolean = false
 )
 
 class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
     private val vault = KnowledgeVault(app)
     private val parser = ImportPipeline(app)
+    private val semantic = KnowledgeSemanticRetriever(app)
     private val gate = Mutex()
     private val prefs = app.getSharedPreferences("contextos_knowledge_choices", Context.MODE_PRIVATE)
     private val _state = MutableStateFlow(KnowledgeState(
         includeInChat = prefs.getBoolean("include_chat", false),
-        agentEnabled = prefs.getBoolean("agent", false)))
+        agentEnabled = prefs.getBoolean("agent", false),
+        semanticAvailable = semantic.available()))
     val state = _state.asStateFlow()
     init {
         viewModelScope.launch(Dispatchers.IO) {
@@ -50,6 +54,28 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
         val snapshot = _state.value
         _state.update { it.copy(query = value, results = KnowledgeSearch.search(value, snapshot.entries)) }
     }
+    fun semanticSearch() {
+        val requested = _state.value.query.trim()
+        if (requested.isBlank() || _state.value.searchingSemantic) return
+        viewModelScope.launch(Dispatchers.Default) {
+            _state.update { it.copy(searchingSemantic = true,
+                message = if (semantic.available()) "Searching imported documents on device..."
+                else "No embedding model installed; using private keyword search.") }
+            try {
+                val matches = semantic.matching(requested, _state.value.entries)
+                _state.update { current -> if (current.query == requested)
+                    current.copy(results = matches,
+                        message = if (semantic.available()) "Semantic retrieval completed on device."
+                                  else "Local keyword results.") else current }
+            } catch (error: Exception) {
+                _state.update { it.copy(message = "Search failed: " +
+                    (error.message ?: "Unknown error").take(150)) }
+            } finally {
+                _state.update { it.copy(searchingSemantic = false) }
+            }
+        }
+    }
+
     fun updateChatConsent(value: Boolean) {
         prefs.edit().putBoolean("include_chat", value).apply()
         _state.update { it.copy(includeInChat = value) }
@@ -118,6 +144,7 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
                 try {
                     val updated = vault.read().map { if (it.id == id) it.copy(done = !it.done) else it }
                     vault.write(updated)
+                    semantic.clear()
                     _state.update { it.copy(entries = updated,
                         results = KnowledgeSearch.search(it.query, updated), message = "Progress updated.") }
                 } catch(e: Exception) {
@@ -143,7 +170,7 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
     fun clearAll() {
         viewModelScope.launch(Dispatchers.IO) {
             gate.withLock {
-                try { vault.write(emptyList()); _state.update {
+                try { vault.write(emptyList()); semantic.clear(); _state.update {
                     it.copy(entries = emptyList(), results = emptyList(),
                         message = "Encrypted knowledge archive cleared.")
                 } } catch(e: Exception) { _state.update {
@@ -160,6 +187,7 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
             require(notes.size <= remaining) { "Archive is full. Remove older entries first." }
             val updated = prev + notes
             vault.write(updated)
+            semantic.clear()
             _state.update { it.copy(entries = updated, results = KnowledgeSearch.search(it.query, updated),
                 message = message, error = null) }
         }
@@ -171,7 +199,8 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
                 val prefs = context.getSharedPreferences("contextos_knowledge_choices", Context.MODE_PRIVATE)
                 if (!prefs.getBoolean("include_chat", false)) return@withContext null
                 val entries = runCatching { KnowledgeVault(context).read() }.getOrDefault(emptyList())
-                val result = KnowledgeSearch.retrievedContext(prompt, entries)
+                val selected = KnowledgeSemanticRetriever(context).matching(prompt, entries)
+                val result = KnowledgeSearch.formatContext(selected)
                 if (prefs.getBoolean("include_chat", false)) result else null
             }
     }
