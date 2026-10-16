@@ -5,7 +5,8 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 
-data class AgentSuggestion(val title: String, val reason: String, val priority: Int)
+data class AgentSuggestion(val title: String, val reason: String, val priority: Int,
+    val id: String = title)
 
 object AgentPlanner {
     /** Deterministic guidance with evidence; no health/emotional/protected trait inference. */
@@ -20,25 +21,29 @@ object AgentPlanner {
                     "Review " + task.title.take(65),
                     "User-saved " + task.category.lowercase() + " deadline: " + due +
                         " (" + (if (remaining < 0) "overdue" else remaining.toString() + " day(s) away") + ").",
-                    if (remaining < 0) 100 else 95 - remaining.toInt())
+                    if (remaining < 0) 100 else 95 - remaining.toInt(),
+                    id = "deadline:" + task.id)
             }
         }
         if (unfinished.isNotEmpty()) {
             suggestions += AgentSuggestion("Continue a pending goal",
-                unfinished.size.toString() + " user-authored career/project/learning entries remain unfinished.", 60)
+                unfinished.size.toString() + " user-authored career/project/learning entries remain unfinished.", 60,
+                id = "pending_goals")
         }
         val minutes = items.filter { it.category == "COMMUTE" }.mapNotNull { it.durationMinutes }
             .filter { it in 1..240 }.sorted()
         if (minutes.size >= 3) {
             suggestions += AgentSuggestion("Plan a commute buffer",
                 "Typical duration from " + minutes.size + " imported trip records: " +
-                    minutes[minutes.size / 2] + " minutes. This is historical, NOT current traffic.", 45)
+                    minutes[minutes.size / 2] + " minutes. This is historical, NOT current traffic.", 45,
+                id = "historical_commute")
         }
         if (suggestions.isEmpty()) {
             suggestions += AgentSuggestion("Build a private plan",
-                "Save a goal or due date to receive grounded, optional suggestions.", 10)
+                "Save a goal or due date to receive grounded, optional suggestions.", 10,
+                id = "create_plan")
         }
         return suggestions.sortedWith(compareByDescending<AgentSuggestion> { it.priority }
-            .thenBy { it.title }).take(4)
+            .thenBy { it.title }).take(10)
     }
 }
