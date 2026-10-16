@@ -355,6 +355,7 @@ private fun IntegrationsScreen(
     var confirmGoogleRevoke by remember { mutableStateOf(false) }
     val app = androidx.compose.ui.platform.LocalContext.current
     val capture = remember { app.getSharedPreferences("contextos_notification_capture", android.content.Context.MODE_PRIVATE) }
+    val agentFeedback = remember { AgentFeedback(app) }
     LaunchedEffect(Unit) {
         notificationPackage = capture.getString("package", "").orEmpty()
         captureNotifications = capture.getBoolean("enabled", false)
@@ -567,9 +568,14 @@ private fun IntegrationsScreen(
             "Uses only your saved project, interview and learning entries or approved calendar/email previews.") {
             val items = state.entries.filter { it.category in setOf("PROJECT","CAREER","LEARNING") }
             Text("Pending: " + items.count { !it.done } + " · Completed: " + items.count { it.done })
-            AgentPlanner.propose(items).take(3).forEach {
+            agentFeedback.personalize(AgentPlanner.propose(items)).take(3).forEach {
                 Text(it.title, fontWeight = FontWeight.SemiBold)
                 Text(it.reason, style = MaterialTheme.typography.bodySmall)
+            }
+            CareerPreparation.nextTopics(items).forEach { topic ->
+                Text("Suggested preparation: " + topic,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary)
             }
         }
 
@@ -586,9 +592,31 @@ private fun IntegrationsScreen(
             }
             Text("Uses saved deadlines only. Checks about twice daily; quiet hours and daily limits from Settings still apply.",
                 style = MaterialTheme.typography.bodySmall)
-            if (state.agentEnabled) AgentPlanner.propose(state.entries).forEach {
-                Text(it.title, fontWeight = FontWeight.Medium)
-                Text(it.reason, style = MaterialTheme.typography.bodySmall)
+            if (state.agentEnabled) {
+                agentFeedback.personalize(AgentPlanner.propose(state.entries)).forEach { suggested ->
+                    Surface(color = MaterialTheme.colorScheme.surfaceContainer,
+                        shape = RoundedCornerShape(14.dp)) {
+                        Column(Modifier.fillMaxWidth().padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Text(suggested.title, fontWeight = FontWeight.Medium)
+                            Text(suggested.reason, style = MaterialTheme.typography.bodySmall)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(onClick = {
+                                    agentFeedback.set(suggested.id, 1)
+                                }) {
+                                    Text(if (agentFeedback.rating(suggested.id) == 1)
+                                        "✓ Helpful" else "Helpful")
+                                }
+                                TextButton(onClick = {
+                                    agentFeedback.set(suggested.id, -1)
+                                }) { Text("Not useful") }
+                            }
+                        }
+                    }
+                }
+                TextButton(onClick = agentFeedback::reset) {
+                    Text("Reset personalized suggestions")
+                }
             }
             Text("No automated external action, unapproved email reply or guaranteed background alert.",
                 style = MaterialTheme.typography.bodySmall)
