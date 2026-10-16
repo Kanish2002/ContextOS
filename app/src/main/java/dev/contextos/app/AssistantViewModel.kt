@@ -114,7 +114,7 @@ class AssistantViewModel(application: Application): AndroidViewModel(application
         }
     }
 
-    fun send(text: String) {
+    fun send(text: String, context: String? = null) {
         val prompt = text.trim()
         if (prompt.isEmpty() || !_state.value.initialized || _state.value.generating || _state.value.busy) return
         val user = ChatMessage(ids.incrementAndGet(), Role.USER, prompt)
@@ -129,7 +129,7 @@ class AssistantViewModel(application: Application): AndroidViewModel(application
             var firstChunk: Long? = null
             val accumulator = StreamAccumulator()
             try {
-                runtime.generate(prompt)
+                runtime.generate(if (context.isNullOrBlank()) prompt else "The user explicitly opted to include the following approximate, current device signals. They are estimates, not verified facts. Do not infer medical or sensitive traits. Context: " + context.take(900) + "\n\nUser request: " + prompt)
                     .flowOn(Dispatchers.Default)
                     .collect { fragment ->
                         if (fragment.isNotEmpty() && firstChunk == null) {

@@ -86,3 +86,25 @@ Once the device runs model load and generation reliably: add activity context (w
 ## Licensing
 
 This starter's original code may be used as a foundation for your app. Third-party dependencies and Google Gemma model weights retain their own licenses and terms; the downloaded model isn't redistributed here.
+
+
+## Phase 2 — context & polished interface
+
+The Phase 2 preview adds:
+- Home, Chat, Context, and Settings tabs with custom light/dark palettes, system-following appearance, and optional Android 12+ dynamic color.
+- Foreground-only accelerometer and ambient light readings when the Context tab is visible AND its sensor toggle is enabled.
+- Step counter readings after granting the Android Activity Recognition permission. **Steps shown are since this app session's first observation, not a whole-day count.** Some phones don't expose the sensor.
+- One-shot approximate location lookup on user request (rounded to 0.01 degrees, not a route or automatic history).
+- Estimated rolling 24h foreground usage (requires granting special Usage Access in Android Settings, then tapping Refresh).
+- User-triggered snapshot saves into app-private SQLite (maximum 100 records; last 20 shown); Delete all clears saved records.
+- Separate, initially-disabled setting to include currently available context in the local AI prompt.
+
+**Privacy constraints:** ContextOS does not request Internet, fine location, or background location permission. It doesn't continuously query location or usage, and live motion/light listeners stop when the Context tab closes. The SQLite snapshots are not yet encrypted; Android app-private storage and disabled backup provide basic protection. Removing granted permissions must be done in Android Settings. Chat messages and signal histories are not synced or backed up by this app.
+
+**Scope:** This phase collects first-party phone signals only. No Google Maps Timeline access, Google accounts, health-data sync, passive background activity analysis, or automated recommendation ranking. Android Usage Stats is an estimate and may double-count concurrent foreground time across multiple apps.
+
+**Build:** Pushes/PRs run the source-only workflow. For a single installable APK including the Qwen model, manually run **Actions → Build APK with offline Qwen model → Run workflow**, selecting the updated branch. If an existing debug APK was signed with a different CI-generated debug keystore, Android may require uninstalling it first (which deletes the old app's local data).
+
+**Tests needed on a device:** permissions, switching to Android settings and returning, theme persistence across app restarts, live sensor lifecycle, step counter availability, approximate location on different providers, and local inference with optional context.
+
+The bundled-model workflow also runs automatically on the Phase 2 feature branch to produce a test APK for the redesigned app.
