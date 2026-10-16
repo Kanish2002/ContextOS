@@ -273,11 +273,16 @@ private fun InsightsSection(
             }
         }
     } else {
+        // Sensors stop when leaving Context. An insight may use only a recently captured reading.
+        val recentSensorReading = context.sensorsEnabled &&
+            (context.lastSensorObservedAtMs?.let { at ->
+                System.currentTimeMillis() - at in 0L..300_000L
+            } ?: false)
         val insights = InsightEngine.recommendations(
             InsightInput(
                 enabled = true,
-                sensing = context.sensing,
-                ambientLux = if (context.sensing) context.ambientLux else null,
+                sensing = recentSensorReading,
+                ambientLux = if (recentSensorReading) context.ambientLux else null,
                 motionLabel = context.motionLabel,
                 stepsSinceOpen = context.stepsSinceOpen,
                 appUseMinutes = context.appUseMinutes,
@@ -643,6 +648,27 @@ private fun SettingsPage(
                         onCheckedChange = appearance::setShareContext)
                 }
                 Text("No background monitoring or cloud sync.",
+                    style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant)
+            }
+        }
+        Surface(shape = RoundedCornerShape(22.dp), color = scheme.surfaceContainerLow) {
+            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.TipsAndUpdates, null, tint = scheme.primary)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Local insights", fontWeight = FontWeight.Bold)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Enable explainable recommendations")
+                        Text("Generate suggestions on Home from available foreground context. No automatic monitoring, notifications or cloud inference.",
+                            style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Switch(checked = appearance.insightsEnabled,
+                        onCheckedChange = appearance::setInsightsEnabled)
+                }
+                Text("Separate from sharing context with AI. Both controls are off by default.",
                     style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant)
             }
         }
