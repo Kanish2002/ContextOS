@@ -7,6 +7,9 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.speech.RecognitionListener
+import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -48,6 +51,11 @@ class IntegrationsActivity : ComponentActivity() {
     private var cloudResult by mutableStateOf("")
     private var routeResult by mutableStateOf("")
     private var deadlineAlerts by mutableStateOf(false)
+    private var onDeviceRecognizer: SpeechRecognizer? = null
+    private val microphonePermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) beginOnDeviceSpeech() else notice = "Microphone permission denied."
+    }
     private val notifyPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         updateDeadlineAlerts(granted)
     }
@@ -77,13 +85,6 @@ class IntegrationsActivity : ComponentActivity() {
         if (it.resultCode == RESULT_OK) google.handleResolution(it.data, requestedScope,
             { message -> notice = message }, { loadGooglePreview() })
         else notice = "Google access not granted."
-    }
-    private val voiceRecognition = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        if (it.resultCode == RESULT_OK) {
-            recognizedVoice = it.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-                ?.firstOrNull().orEmpty()
-            if (recognizedVoice.isNotBlank()) notice = "Voice text ready for review. Nothing was saved."
-        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -225,13 +226,64 @@ class IntegrationsActivity : ComponentActivity() {
         }
     }
     private fun startVoice() {
+        if (Build.VERSION.SDK_INT < 31 || !SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) {
+            notice = "Offline speech recognition is not available on this device. Nothing was sent to a speech service."
+            return
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED) {
+            microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        beginOnDeviceSpeech()
+    }
+
+    private fun beginOnDeviceSpeech() {
+        if (Build.VERSION.SDK_INT < 31 || !SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) {
+            notice = "Android does not offer an on-device speech recognition service."
+            return
+        }
         try {
-            voiceRecognition.launch(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-                putExtra(RecognizerIntent.EXTRA_PROMPT, "Dictate a note (offline preferred, not guaranteed)")
+            onDeviceRecognizer?.destroy()
+            val engine = SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
+            onDeviceRecognizer = engine
+            engine.setRecognitionListener(object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) {
+                    notice = "Listening on device. Dictate a note."
+                }
+                override fun onBeginningOfSpeech() {}
+                override fun onRmsChanged(rmsdB: Float) {}
+                override fun onBufferReceived(buffer: ByteArray?) {}
+                override fun onEndOfSpeech() {}
+                override fun onError(error: Int) {
+                    notice = "On-device speech recognition failed (code " + error + ")."
+                }
+                override fun onResults(results: Bundle?) {
+                    recognizedVoice = results?.getStringArrayList(
+                        SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
+                    notice = if (recognizedVoice.isNotBlank())
+                        "Offline speech text ready for review. Nothing has been saved."
+                    else "No words were recognized."
+                }
+                override fun onPartialResults(partialResults: Bundle?) {}
+                override fun onEvent(eventType: Int, params: Bundle?) {}
             })
-        } catch(e: Exception) { notice = "No speech recognition app is installed." }
+            engine.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                    RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            })
+        } catch (failure: Exception) {
+            notice = "Could not initialize on-device speech: " +
+                (failure.message ?: "Unavailable")
+        }
+    }
+
+    override fun onDestroy() {
+        onDeviceRecognizer?.destroy()
+        onDeviceRecognizer = null
+        super.onDestroy()
     }
     private fun openRoute(destination: String) {
         if (destination.isBlank()) { notice = "Enter the destination first.";return }
@@ -378,7 +430,7 @@ private fun IntegrationsScreen(
             if (voiceText.isNotBlank()) OutlinedButton(onClick = { askOffline(voiceText) }) {
                 Text("Ask offline AI about dictated text")
             }
-            Text("Android speech services may use the network despite offline preference. Review text before saving.",
+            Text("Speech capture requires Android 12+ and an installed ON-DEVICE recognizer. It never falls back silently to a network recognizer; review all text before saving.",
                 style = MaterialTheme.typography.bodySmall)
         }
 
