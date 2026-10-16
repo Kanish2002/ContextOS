@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import dev.contextos.app.data.ModelStore
 import dev.contextos.app.inference.LocalInferenceEngine
 import dev.contextos.app.model.*
+import dev.contextos.app.memory.MemorySummaryPolicy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -194,6 +195,36 @@ class AssistantViewModel(application: Application): AndroidViewModel(application
                 _state.value = _state.value.copy(busy = false)
             }
         }
+    }
+
+    fun proposeMemoryFromChat() {
+        if (!_state.value.initialized || _state.value.busy || _state.value.generating) return
+        val transcript = MemorySummaryPolicy.transcript(_state.value.messages)
+        if (transcript.isBlank()) {
+            _state.value = _state.value.copy(error = "Chat with the AI before creating a summary.")
+            return
+        }
+        viewModelScope.launch {
+            _state.value = _state.value.copy(busy = true, memorySuggestion = null,
+                status = "Creating a private memory draft...")
+            try {
+                val result = runtime.summarize(transcript)
+                val proposal = MemorySummaryPolicy.cleanProposal(result)
+                _state.value = _state.value.copy(
+                    memorySuggestion = proposal.takeUnless { it.isBlank() || it == "NO_MEMORY" },
+                    status = if (proposal == "NO_MEMORY") "No stable preference found in this chat."
+                             else "Review the proposed memory before saving.")
+            } catch (failure: Exception) {
+                _state.value = _state.value.copy(error = failure.message?.take(120)
+                    ?: "Offline memory summary failed.")
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun dismissMemoryProposal() {
+        _state.value = _state.value.copy(memorySuggestion = null)
     }
 
     fun clearError() { _state.value = _state.value.copy(error = null) }
