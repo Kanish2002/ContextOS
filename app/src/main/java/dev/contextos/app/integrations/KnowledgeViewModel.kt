@@ -166,6 +166,8 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
                 try {
                     val updated = vault.read().filterNot { it.id == id }
                     vault.write(updated)
+                    semantic.clear()
+                    markPrivacyRevision()
                     _state.update { it.copy(entries = updated,
                         results = KnowledgeSearch.search(it.query, updated), message = "Deleted from archive.") }
                 } catch(e: Exception) {
