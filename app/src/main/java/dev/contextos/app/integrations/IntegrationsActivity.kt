@@ -169,8 +169,16 @@ class IntegrationsActivity : ComponentActivity() {
                                         it, result.travelSeconds, buffer.coerceIn(0, 120)))
                                         .atZone(java.time.ZoneId.systemDefault()).toLocalDateTime()
                                 }
+                                val delay = LiveRoutePlanner.delayMinutes(
+                                    result.travelSeconds, result.typicalSeconds)
+                                val alert = when {
+                                    delay == null -> " Traffic baseline unavailable."
+                                    delay >= 8 -> " Traffic delay warning: about " + delay +
+                                        " extra minutes versus typical uncongested travel."
+                                    else -> " No major traffic delay indicated."
+                                }
                                 routeResult = "Live traffic-aware estimate: " + liveMinutes + " min, " +
-                                    result.distanceMeters / 1000.0 + " km." +
+                                    result.distanceMeters / 1000.0 + " km." + alert +
                                     (if (departure == null) "" else " Suggested departure: " + departure) +
                                     " · " + result.advisory
                             } catch (e: Exception) {
