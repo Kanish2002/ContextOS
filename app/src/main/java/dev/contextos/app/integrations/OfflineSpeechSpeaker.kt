@@ -11,7 +11,10 @@ import java.util.Locale
 class OfflineSpeechSpeaker(context: Context, private val report: (String) -> Unit) {
     private var ready = false
     private var pending: String? = null
-    private val tts = TextToSpeech(context.applicationContext) { status ->
+    private lateinit var tts: TextToSpeech
+
+    init {
+        tts = TextToSpeech(context.applicationContext) { status ->
         if (status == TextToSpeech.SUCCESS) {
             // TTS implementation and voice availability belong to Android's installed engine.
             val available = runCatching {
@@ -28,6 +31,7 @@ class OfflineSpeechSpeaker(context: Context, private val report: (String) -> Uni
                 pending?.let { phrase -> pending = null; start(phrase) }
             }
         } else report("Android text-to-speech is unavailable.")
+        }
     }
 
     fun speak(raw: String) {
