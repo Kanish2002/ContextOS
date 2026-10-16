@@ -51,7 +51,7 @@ class AgentReminderWorker(context: Context, params: WorkerParameters) : Worker(c
         val candidate = entries.filter { !it.done && it.dueAt != null }.mapNotNull { item ->
             val date = Instant.ofEpochMilli(item.dueAt!!).atZone(ZoneId.systemDefault()).toLocalDate()
             val days = ChronoUnit.DAYS.between(today, date)
-            if (days in 0..1 && prefs.getString("reminded_" + item.id, "") != today.toString())
+            if (days in 0L..1L && prefs.getString("reminded_" + item.id, "") != today.toString())
                 item to days else null
         }.minByOrNull { it.second }?.first ?: return Result.success()
         if (Build.VERSION.SDK_INT >= 26) {
