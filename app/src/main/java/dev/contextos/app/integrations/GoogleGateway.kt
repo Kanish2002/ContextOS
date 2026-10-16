@@ -204,7 +204,7 @@ class GoogleGateway(private val activity: Activity) {
             check(connection.responseCode in 200..299) {
                 "Google Drive returned HTTP " + connection.responseCode
             }
-            val bytes = connection.inputStream.use { it.readNBytes(100_001) }
+            val bytes = connection.inputStream.use { it.readBoundedBytes(100_000) }
             require(bytes.size <= 100_000) { "Document exceeds 100 KB import limit." }
             return String(bytes, Charsets.UTF_8)
         } finally { connection.disconnect() }
