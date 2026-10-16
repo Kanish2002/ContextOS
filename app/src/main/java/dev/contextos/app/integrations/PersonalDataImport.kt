@@ -14,7 +14,7 @@ object PersonalDataImport {
         require(length < 0 || length <= MAX_BYTES) { "File exceeds 2 MB limit" }
         val stream = resolver.openInputStream(uri) ?: error("Cannot open selected document")
         return stream.use { input ->
-            val bytes = input.readNBytes(MAX_BYTES + 1)
+            val bytes = input.readBoundedBytes(MAX_BYTES)
             require(bytes.size <= MAX_BYTES) { "File exceeds 2 MB limit" }
             bytes.toString(Charsets.UTF_8)
         }
