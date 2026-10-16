@@ -41,6 +41,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import dev.contextos.app.memory.MemoryKind
 import androidx.core.view.WindowCompat
 import dev.contextos.app.insights.InsightEngine
 import dev.contextos.app.insights.InsightInput
@@ -75,6 +78,9 @@ class MainActivity : ComponentActivity() {
     }
     private val modelPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(assistant::importModel)
+    }
+    private val embeddingPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(memoryModel::importEmbeddingModel)
     }
     private val memoryExporter = registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
         uri?.let(memoryModel::exportPlaintext)
@@ -130,9 +136,12 @@ class MainActivity : ComponentActivity() {
                     importModel = { modelPicker.launch(arrayOf("*/*")) },
                     loadModel = assistant::loadModel, selectBackend = assistant::chooseBackend,
                     send = { prompt ->
-                        assistant.send(prompt,
-                            if (settings.shareContextWithChat) contextModel.currentSummary() else null,
-                            memoryModel.recallForPrompt(prompt))
+                        lifecycleScope.launch {
+                            val memoriesForQuestion = memoryModel.recallForPromptAsync(prompt)
+                            assistant.send(prompt,
+                                if (settings.shareContextWithChat) contextModel.currentSummary() else null,
+                                memoriesForQuestion)
+                        }
                     },
                     newChat = assistant::newChat, clearError = assistant::clearError,
                     toggleSensors = contextModel::setSensorsEnabled,
@@ -153,6 +162,9 @@ class MainActivity : ComponentActivity() {
                     saveSnapshot = contextModel::saveSnapshot,
                     clearHistory = contextModel::clearHistory,
                     addMemory = memoryModel::add,
+                    importEmbedding = { embeddingPicker.launch(arrayOf("application/octet-stream", "*/*")) },
+                    requestMemorySummary = assistant::proposeMemoryFromChat,
+                    dismissMemorySummary = assistant::dismissMemoryProposal,
                     removeMemory = { id ->
                         memoryModel.remove(id)
                         if (memories.includeInChat) assistant.newChat()
@@ -183,7 +195,9 @@ private fun ContextApp(
     toggleSensors: (Boolean) -> Unit, requestSteps: () -> Unit, activityAllowed: Boolean,
     requestLocation: () -> Unit, usageAllowed: Boolean, requestUsage: () -> Unit,
     saveSnapshot: () -> Unit, clearHistory: () -> Unit,
-    addMemory: (String) -> Unit, removeMemory: (String) -> Unit,
+    addMemory: (String, MemoryKind) -> Unit, removeMemory: (String) -> Unit,
+    importEmbedding: () -> Unit, requestMemorySummary: () -> Unit,
+    dismissMemorySummary: () -> Unit,
     clearMemories: () -> Unit, exportMemories: () -> Unit,
     setMemoryChatConsent: (Boolean) -> Unit
 ) {
@@ -250,7 +264,9 @@ private fun ContextApp(
                     requestLocation, usageAllowed, requestUsage, saveSnapshot, clearHistory)
                 Destination.MEMORY -> MemoryPage(memory, addMemory, removeMemory,
                     clearMemories, exportMemories, setMemoryChatConsent,
-                    modelIdle = !ai.busy && !ai.generating)
+                    modelIdle = !ai.busy && !ai.generating, ai = ai,
+                    requestSummary = requestMemorySummary, dismissSummary = dismissMemorySummary,
+                    importEmbedding = importEmbedding)
                 Destination.SETTINGS -> SettingsPage(appearance, ai, importModel, loadModel, selectBackend, clearHistory,
                     insightSettings, requestSuggestionNotifications)
             }
