@@ -119,6 +119,7 @@ class GoogleGateway(private val activity: Activity) {
             address.startsWith("https://gmail.googleapis.com/"))
         val connection = URL(address).openConnection() as HttpURLConnection
         connection.connectTimeout = 12000; connection.readTimeout = 12000
+        connection.instanceFollowRedirects = false
         connection.setRequestProperty("Authorization", "Bearer " + token)
         connection.setRequestProperty("Accept", "application/json")
         try {
