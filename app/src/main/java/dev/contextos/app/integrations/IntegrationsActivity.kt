@@ -118,6 +118,18 @@ class IntegrationsActivity : ComponentActivity() {
                         google.authorize(scope, { launch -> googleResolution.launch(launch) },
                             { message -> notice = message }, { loadGooglePreview() }) },
                     disconnectGoogle = { google.disconnect(); googlePreview = emptyList() },
+                    fetchSelectedGoogle = { item ->
+                        lifecycleScope.launch {
+                            notice = "Reading selected Google content..."
+                            try {
+                                val saved = google.readSelectedContent(item)
+                                library.savePreview(saved)
+                                notice = "Selected " + saved.source + " added to encrypted search."
+                            } catch (failure: Exception) {
+                                notice = "Google content not imported: " + (failure.message ?: "Unknown failure")
+                            }
+                        }
+                    },
                     agentReminders = deadlineAlerts,
                     toggleReminders = { value ->
                         if (!value) updateDeadlineAlerts(false)
@@ -254,6 +266,7 @@ private fun IntegrationsScreen(
     chooseDocuments: () -> Unit, choosePhoto: () -> Unit,
     calendar: () -> Unit, health: () -> Unit, notifications: () -> Unit,
     google: (GoogleScope) -> Unit, disconnectGoogle: () -> Unit,
+    fetchSelectedGoogle: (KnowledgeEntry) -> Unit,
     agentReminders: Boolean, toggleReminders: (Boolean) -> Unit,
     voice: () -> Unit, askOffline: (String) -> Unit,
     route: (String) -> Unit,
@@ -386,9 +399,18 @@ private fun IntegrationsScreen(
             googlePreview.take(20).forEach { entry ->
                 Text(entry.title, fontWeight = FontWeight.Medium)
                 Text(entry.body.take(220), style = MaterialTheme.typography.bodySmall)
-                TextButton(onClick = { savePreview(entry) }, enabled = !state.busy) { Text("Save this preview locally") }
+                TextButton(onClick = { savePreview(entry) }, enabled = !state.busy) {
+                    Text("Save this preview locally")
+                }
+                if (entry.source == "Selected Gmail preview" ||
+                    entry.source == "Selected Google Drive metadata") {
+                    TextButton(onClick = { fetchSelectedGoogle(entry) },
+                        enabled = !state.busy) {
+                        Text("Import selected full text into encrypted search")
+                    }
+                }
             }
-            Text("The Drive preview indexes metadata only; it does not download private Drive document contents.",
+            Text("Drive previews contain metadata only. Tap Import selected full text to fetch a supported document after explicit approval; other formats can be selected via the Android document picker.",
                 style = MaterialTheme.typography.bodySmall)
         }
 
