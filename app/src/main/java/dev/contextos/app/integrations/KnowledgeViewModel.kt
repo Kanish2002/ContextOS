@@ -167,6 +167,29 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+    fun deleteGoogleImports() {
+        viewModelScope.launch(Dispatchers.IO) {
+            gate.withLock {
+                try {
+                    val updated = vault.read().filterNot { entry ->
+                        entry.source.startsWith("Selected Gmail") ||
+                            entry.source.startsWith("Selected Google") ||
+                            entry.source.startsWith("Explicitly imported Gmail") ||
+                            entry.source.startsWith("Explicitly imported Drive")
+                    }
+                    vault.write(updated)
+                    semantic.clear()
+                    _state.update { it.copy(entries = updated,
+                        results = KnowledgeSearch.search(it.query, updated),
+                        message = "Locally saved Google-imported content erased.") }
+                } catch (failure: Exception) {
+                    _state.update { it.copy(message = "Could not erase Google imports: " +
+                        (failure.message ?: "Unknown error").take(100)) }
+                }
+            }
+        }
+    }
+
     fun clearAll() {
         viewModelScope.launch(Dispatchers.IO) {
             gate.withLock {
