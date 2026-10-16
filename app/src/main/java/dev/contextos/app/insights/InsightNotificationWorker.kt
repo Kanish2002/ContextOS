@@ -69,8 +69,8 @@ object InsightNotificationScheduler {
             manager.cancelUniqueWork(WORK_NAME)
             return
         }
-        // WorkManager batches delivery; hourly/exact alarm promises are intentionally avoided.
-        val request = PeriodicWorkRequestBuilder<InsightNotificationWorker>(24, TimeUnit.HOURS)
+        // WorkManager checks about hourly, but delivery is inexact. Quiet hours and caps are checked at run time.
+        val request = PeriodicWorkRequestBuilder<InsightNotificationWorker>(1, TimeUnit.HOURS)
             .setInitialDelay(1, TimeUnit.HOURS).build()
         manager.enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, request)
     }
