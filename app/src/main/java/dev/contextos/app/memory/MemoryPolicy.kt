@@ -3,7 +3,10 @@ package dev.contextos.app.memory
 import java.util.Locale
 
 /** A user-authored item, never extracted from chats or sensors automatically. */
-data class MemoryNote(val id: String, val text: String, val createdAtMs: Long)
+enum class MemoryKind { NOTE, PREFERENCE, GOAL, FACT }
+
+data class MemoryNote(val id: String, val text: String, val createdAtMs: Long,
+    val kind: MemoryKind = MemoryKind.NOTE)
 
 /** Pure rules, independently unit tested without a model or Android runtime. */
 object MemoryPolicy {
@@ -26,10 +29,11 @@ object MemoryPolicy {
             require(it.length <= MAX_NOTE_LENGTH) { "Memory exceeds $MAX_NOTE_LENGTH characters." }
         }
 
-    fun add(existing: List<MemoryNote>, text: String, id: String, timestamp: Long): List<MemoryNote> {
+    fun add(existing: List<MemoryNote>, text: String, id: String, timestamp: Long,
+            kind: MemoryKind = MemoryKind.NOTE): List<MemoryNote> {
         require(existing.size < MAX_NOTES) { "Memory vault is full (limit: $MAX_NOTES)." }
         require(existing.none { it.id == id }) { "Memory ID already exists." }
-        return existing + MemoryNote(id, normalize(text), timestamp)
+        return existing + MemoryNote(id, normalize(text), timestamp, kind)
     }
 
     private fun tokens(s: String): Set<String> = tokenPattern
@@ -56,7 +60,7 @@ object MemoryPolicy {
 
     fun promptContext(question: String, notes: List<MemoryNote>): String? =
         matching(question, notes)
-            .joinToString("\n") { "- " + it.text }
+            .joinToString("\n") { "- [" + it.kind.name.lowercase() + "] " + it.text }
             .take(MAX_PROMPT_CONTEXT)
             .takeIf { it.isNotBlank() }
 }
