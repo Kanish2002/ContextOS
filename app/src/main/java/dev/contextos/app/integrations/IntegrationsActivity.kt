@@ -99,7 +99,10 @@ class IntegrationsActivity : ComponentActivity() {
                     search = library::updateSearch, save = library::add, remove = library::delete,
                     done = library::toggleDone, clear = library::clearAll,
                     savePreview = library::savePreview, clearMessage = library::clearMessage,
-                    shareChat = library::updateChatConsent, setAgent = library::updateAgentConsent,
+                    shareChat = library::updateChatConsent, setAgent = { enabled ->
+                        if (!enabled) updateDeadlineAlerts(false)
+                        library.updateAgentConsent(enabled)
+                    },
                     chooseDocuments = { documents.launch(arrayOf("application/pdf", "text/*",
                         "application/json", "text/calendar", "text/csv", "application/octet-stream")) },
                     choosePhoto = { photo.launch(
