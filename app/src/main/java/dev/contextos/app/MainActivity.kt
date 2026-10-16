@@ -265,7 +265,7 @@ private fun InsightsSection(
                 Text("Your context stays yours", fontWeight = FontWeight.SemiBold)
                 Text("Turn on on-device insights to see suggestions from explicitly enabled or saved signals. Off by default.",
                     style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
-                TextButton(onClick = { appearance.setInsightsEnabled(true) }) {
+                TextButton(onClick = { appearance.updateInsightsConsent(true) }) {
                     Text("Enable local insights")
                     Spacer(Modifier.width(4.dp))
                     Icon(Icons.Default.ArrowForward, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -666,7 +666,7 @@ private fun SettingsPage(
                     }
                     Spacer(Modifier.width(8.dp))
                     Switch(checked = appearance.insightsEnabled,
-                        onCheckedChange = appearance::setInsightsEnabled)
+                        onCheckedChange = appearance::updateInsightsConsent)
                 }
                 Text("Separate from sharing context with AI. Both controls are off by default.",
                     style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant)
