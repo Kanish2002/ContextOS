@@ -48,6 +48,8 @@ import kotlinx.coroutines.launch
 import dev.contextos.app.memory.MemoryKind
 import dev.contextos.app.integrations.KnowledgeViewModel
 import dev.contextos.app.integrations.IntegrationsActivity
+import dev.contextos.app.integrations.OfflineSpeechSpeaker
+import android.widget.Toast
 import androidx.core.view.WindowCompat
 import dev.contextos.app.insights.InsightEngine
 import dev.contextos.app.insights.InsightInput
@@ -76,6 +78,12 @@ class MainActivity : ComponentActivity() {
     private val contextModel: ContextViewModel by viewModels()
     private val memoryModel: MemoryViewModel by viewModels()
     private val suggestionSettings by lazy { InsightPreferences(applicationContext) }
+    private val speechDelegate = lazy {
+        OfflineSpeechSpeaker(applicationContext) { message ->
+            runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
+        }
+    }
+    private val speech by speechDelegate
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         suggestionSettings.notificationsEnabled = granted
         InsightNotificationScheduler.sync(applicationContext, granted)
@@ -115,6 +123,7 @@ class MainActivity : ComponentActivity() {
                 ContextApp(
                     tab = tab, navigate = { tab = it }, ai = ai, context = context,
                     prefillChat = intent.getStringExtra("voice_prompt").orEmpty(),
+                    speakAssistant = { reply -> speech.speak(reply) },
                     memory = memories, appearance = settings, insightSettings = suggestionSettings,
                     requestSuggestionNotifications = { enabled ->
                         if (!enabled) {
@@ -193,12 +202,17 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onDestroy() {
+        if (speechDelegate.isInitialized()) speech.close()
+        super.onDestroy()
+    }
 }
 
 @Composable
 private fun ContextApp(
     tab: Destination, navigate: (Destination) -> Unit,
-    prefillChat: String,
+    prefillChat: String, speakAssistant: (String) -> Unit,
     ai: AssistantState, context: ContextState, memory: MemoryState, appearance: AppearanceSettings,
     insightSettings: InsightPreferences, requestSuggestionNotifications: (Boolean) -> Unit,
     explainSuggestion: (DeviceInsight) -> Unit,
@@ -272,7 +286,8 @@ private fun ContextApp(
                     openMemory = { navigate(Destination.MEMORY) }, savedMemories = memory.notes.size,
                     insightSettings = insightSettings,
                     explainSuggestion = { insight -> explainSuggestion(insight); if (ai.initialized && !ai.busy && !ai.generating) navigate(Destination.CHAT) })
-                Destination.CHAT -> ChatPage(ai, send, importModel, loadModel, newChat, clearError, keyboardVisible, prefillChat)
+                Destination.CHAT -> ChatPage(ai, send, importModel, loadModel, newChat, clearError,
+                    keyboardVisible, prefillChat, speakAssistant)
                 Destination.CONTEXT -> ContextPage(context, toggleSensors, requestSteps, activityAllowed,
                     requestLocation, usageAllowed, requestUsage, saveSnapshot, clearHistory)
                 Destination.MEMORY -> MemoryPage(memory, addMemory, editMemory, removeMemory,
@@ -479,7 +494,7 @@ private fun SectionTitle(title: String, hint: String? = null) {
 private fun ChatPage(
     state: AssistantState, send: (String) -> Unit, importModel: () -> Unit, loadModel: () -> Unit,
     newChat: () -> Unit, clearError: () -> Unit, keyboardVisible: Boolean,
-    prefill: String
+    prefill: String, speakAssistant: (String) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
     var draft by rememberSaveable(prefill) { mutableStateOf(prefill) }
@@ -573,7 +588,7 @@ private fun ChatPage(
         } else {
             LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
-                items(state.messages, key = { it.id }) { message -> ChatBubble(message) }
+                items(state.messages, key = { it.id }) { message -> ChatBubble(message, speakAssistant) }
             }
         }
         if (!keyboardVisible) state.benchmark?.let { b ->
@@ -615,7 +630,7 @@ private fun ChatPage(
 }
 
 @Composable
-private fun ChatBubble(message: ChatMessage) {
+private fun ChatBubble(message: ChatMessage, speak: (String) -> Unit) {
     val user = message.role == Role.USER
     val scheme = MaterialTheme.colorScheme
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (user) Alignment.End else Alignment.Start) {
@@ -628,11 +643,22 @@ private fun ChatBubble(message: ChatMessage) {
             shape = RoundedCornerShape(20.dp),
             modifier = Modifier.fillMaxWidth(if (user) 0.88f else 0.96f)
         ) {
-            Text(
-                if (message.generating && message.content.isEmpty()) "Thinking locally…" else message.content,
-                modifier = Modifier.padding(16.dp),
-                color = if (user) scheme.onPrimaryContainer else scheme.onSurface,
-                style = MaterialTheme.typography.bodyLarge)
+            Column(Modifier.fillMaxWidth()) {
+                Text(
+                    if (message.generating && message.content.isEmpty()) "Thinking locally…" else message.content,
+                    modifier = Modifier.padding(16.dp),
+                    color = if (user) scheme.onPrimaryContainer else scheme.onSurface,
+                    style = MaterialTheme.typography.bodyLarge)
+                if (!user && !message.generating && message.content.isNotBlank()) {
+                    TextButton(onClick = { speak(message.content) },
+                        modifier = Modifier.padding(start = 6.dp, bottom = 2.dp)) {
+                        Icon(Icons.Default.VolumeUp, contentDescription = null,
+                            modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Read aloud offline")
+                    }
+                }
+            }
         }
     }
 }
