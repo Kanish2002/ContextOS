@@ -14,6 +14,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 import java.time.ZoneId
+import java.util.UUID
 
 data class KnowledgeState(
     val entries: List<KnowledgeEntry> = emptyList(),
@@ -39,6 +40,10 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
         agentEnabled = prefs.getBoolean("agent", false),
         semanticAvailable = semantic.available()))
     val state = _state.asStateFlow()
+
+    private fun markPrivacyRevision() {
+        prefs.edit().putString("privacy_revision", UUID.randomUUID().toString()).apply()
+    }
     init {
         viewModelScope.launch(Dispatchers.IO) {
             gate.withLock {
@@ -78,6 +83,7 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
 
     fun updateChatConsent(value: Boolean) {
         prefs.edit().putBoolean("include_chat", value).apply()
+        markPrivacyRevision()
         _state.update { it.copy(includeInChat = value) }
     }
     fun updateAgentConsent(value: Boolean) {
@@ -145,6 +151,7 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
                     val updated = vault.read().map { if (it.id == id) it.copy(done = !it.done) else it }
                     vault.write(updated)
                     semantic.clear()
+                    markPrivacyRevision()
                     _state.update { it.copy(entries = updated,
                         results = KnowledgeSearch.search(it.query, updated), message = "Progress updated.") }
                 } catch(e: Exception) {
@@ -179,6 +186,7 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     vault.write(updated)
                     semantic.clear()
+                    markPrivacyRevision()
                     _state.update { it.copy(entries = updated,
                         results = KnowledgeSearch.search(it.query, updated),
                         message = "Locally saved Google-imported content erased.") }
@@ -193,7 +201,7 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
     fun clearAll() {
         viewModelScope.launch(Dispatchers.IO) {
             gate.withLock {
-                try { vault.write(emptyList()); semantic.clear(); _state.update {
+                try { vault.write(emptyList()); semantic.clear(); markPrivacyRevision(); _state.update {
                     it.copy(entries = emptyList(), results = emptyList(),
                         message = "Encrypted knowledge archive cleared.")
                 } } catch(e: Exception) { _state.update {
@@ -211,6 +219,7 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
             val updated = prev + notes
             vault.write(updated)
             semantic.clear()
+            markPrivacyRevision()
             _state.update { it.copy(entries = updated, results = KnowledgeSearch.search(it.query, updated),
                 message = message, error = null) }
         }
