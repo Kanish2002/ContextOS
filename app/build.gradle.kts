@@ -12,8 +12,8 @@ android {
         applicationId = "dev.contextos.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.5.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -45,6 +45,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("androidx.work:work-runtime-ktx:2.10.5")
+    implementation("com.google.mediapipe:tasks-text:0.10.35")
     // Official Kotlin Android runtime; "latest.release" follows Google's current docs.
     // Pin the resolved version before a production release.
     implementation("com.google.ai.edge.litertlm:litertlm-android:latest.release")
