@@ -68,10 +68,18 @@ class IntegrationsActivity : ComponentActivity() {
     }
 
     private val documents = registerForActivityResult(ActivityResultContracts.OpenDocument()) {
-        it?.let(library::importDocument)
+        if (it == null) notice = "Document selection cancelled."
+        else {
+            notice = ""
+            library.importDocument(it)
+        }
     }
     private val photo = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) {
-        it?.let(library::importPhoto)
+        if (it == null) notice = "Photo selection cancelled."
+        else {
+            notice = ""
+            library.importPhoto(it)
+        }
     }
     private val calendarPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) loadDeviceCalendar() else notice = "Calendar permission denied."
@@ -111,7 +119,8 @@ class IntegrationsActivity : ComponentActivity() {
                         library.updateAgentConsent(enabled)
                     },
                     chooseDocuments = { documents.launch(arrayOf("application/pdf", "text/*",
-                        "application/json", "text/calendar", "text/csv", "application/octet-stream")) },
+                        "application/json", "text/calendar", "text/csv", "application/octet-stream",
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document")) },
                     choosePhoto = { photo.launch(
                         androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                     calendar = ::requestDeviceCalendar,
@@ -413,11 +422,22 @@ private fun IntegrationsScreen(
         Text("Opt-in sources · Encrypted archive · No silent import",
             color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (state.busy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        Text(notice.ifBlank { state.error ?: state.message },
+        if (notice.isNotBlank()) {
+            Text(notice, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Text("Knowledge archive: " + state.message,
             style = MaterialTheme.typography.bodySmall,
-            color = if (state.error != null) MaterialTheme.colorScheme.error
-                else MaterialTheme.colorScheme.onSurfaceVariant)
-        if (state.error != null) TextButton(onClick = clearMessage) { Text("Dismiss error") }
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        state.error?.let { error ->
+            Text(error, style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error)
+            if (!state.vaultUnavailable) TextButton(onClick = clearMessage) { Text("Dismiss error") }
+        }
+        if (state.vaultUnavailable) Text(
+            "The encrypted archive cannot be opened. Do not reinstall or erase app data before exporting any recoverable information.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error)
 
         IntegrationCard("1 · Your private knowledge",
             "Search selected notes, documents and conversations locally. Ask about last Tuesday or unfinished projects.") {
@@ -490,7 +510,7 @@ private fun IntegrationsScreen(
             "Import only selected items via Android document/photo pickers. Photo text recognition is on-device.") {
             OutlinedButton(onClick = chooseDocuments) { Text("Import document or Timeline export") }
             OutlinedButton(onClick = choosePhoto) { Text("Choose photo and recognize text") }
-            Text("Supports PDF text, TXT, Markdown, CSV, JSON, HTML and calendar text. For scanned PDFs with no text layer, the first five pages are OCRed locally within a memory limit. WhatsApp .txt exports and known Timeline JSON layouts are supported.",
+            Text("Supports PDF, Word .docx, TXT, Markdown, CSV, JSON, HTML and calendar text. A selected PDF without a text layer uses capped on-device OCR. Google Drive documents can be selected through Android's file picker where supported; Gmail OAuth is separate.",
                 style = MaterialTheme.typography.bodySmall)
         }
 

@@ -69,10 +69,12 @@ object TimelineParser {
 }
 
 class ImportPipeline(private val context: Context) {
-    private fun title(uri: Uri): String = context.contentResolver.query(
-        uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null
-    )?.use { if (it.moveToFirst()) it.getString(0) else null }
-        ?.take(150) ?: (uri.lastPathSegment?.take(150) ?: "Selected file")
+    private fun title(uri: Uri): String = runCatching {
+        context.contentResolver.query(
+            uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null
+        )?.use { if (it.moveToFirst()) it.getString(0) else null }
+    }.getOrNull()?.take(150)
+        ?: (uri.lastPathSegment?.take(150) ?: "Selected file")
 
     private fun boundedBytes(uri: Uri, max: Int = 16 * 1024 * 1024): ByteArray {
         val input = context.contentResolver.openInputStream(uri) ?: error("Cannot open selected file.")
@@ -91,12 +93,19 @@ class ImportPipeline(private val context: Context) {
 
     suspend fun read(uri: Uri): List<KnowledgeEntry> = withContext(Dispatchers.IO) {
         val filename = title(uri)
-        val ext = filename.substringAfterLast('.', "").lowercase(Locale.ROOT)
-        require(ext in setOf("txt","md","csv","json","pdf","html","htm","ics","vcf")) {
-            "Select a PDF, text, Markdown, CSV, JSON, iCalendar or HTML file."
+        val allowed = setOf("txt","md","csv","json","pdf","html","htm","ics","vcf","docx")
+        val fromName = filename.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        val fromMime = runCatching {
+            android.webkit.MimeTypeMap.getSingleton().getExtensionFromMimeType(
+                context.contentResolver.getType(uri).orEmpty())
+        }.getOrNull()?.lowercase(Locale.ROOT)
+        val ext = fromName.takeIf { it in allowed } ?: fromMime.takeIf { it in allowed }
+        require(ext != null) {
+            "Unsupported file type. Select a .txt, .pdf, .docx, .md, .csv, .json, .html, .ics or .vcf file."
         }
         val bytes = boundedBytes(uri)
         val text = when(ext) {
+            "docx" -> WordDocumentParser.extract(bytes)
             "pdf" -> {
                 PDFBoxResourceLoader.init(context)
                 PDDocument.load(bytes).use { pdf ->
@@ -110,7 +119,7 @@ class ImportPipeline(private val context: Context) {
                 if (ext in setOf("html", "htm")) it.replace(Regex("<[^>]+>"), " ") else it
             }
         }.trim()
-        require(text.isNotBlank()) { "No extractable text found. Scanned PDFs may require OCR." }
+        require(text.isNotBlank()) { "No readable text found in this selected file." }
         if (ext == "txt" && (
                 text.contains("] ") || text.lineSequence().take(10).any { it.contains(" - ") }
             )) {

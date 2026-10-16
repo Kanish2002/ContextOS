@@ -26,7 +26,8 @@ data class KnowledgeState(
     val includeInChat: Boolean = false,
     val agentEnabled: Boolean = false,
     val semanticAvailable: Boolean = false,
-    val searchingSemantic: Boolean = false
+    val searchingSemantic: Boolean = false,
+    val vaultUnavailable: Boolean = false
 )
 
 class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
@@ -50,7 +51,8 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
                 try { _state.update { it.copy(entries = vault.read(), busy = false,
                     message = "Encrypted, searchable and only on your phone.") } }
                 catch (_: Exception) { _state.update { it.copy(busy = false,
-                    error = "Cannot decrypt the knowledge archive. It has NOT been overwritten.") } }
+                    vaultUnavailable = true,
+                    error = "Cannot unlock the encrypted knowledge archive. It has NOT been overwritten.") } }
             }
         }
     }
@@ -91,25 +93,37 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(agentEnabled = value) }
     }
     fun importDocument(uri: Uri) {
-        if (_state.value.busy || _state.value.error != null) return
+        if (_state.value.busy || _state.value.vaultUnavailable) {
+            _state.update { it.copy(message = if (it.vaultUnavailable)
+                "Encrypted archive unavailable; no data has been overwritten."
+                else "Please wait for the current import to finish.") }
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
-            _state.update { it.copy(busy = true, message = "Reading explicitly selected document...") }
+            _state.update { it.copy(busy = true, error = null,
+                message = "Reading selected document via Android's file provider...") }
             try {
                 val items = parser.read(uri)
-                append(items, "Imported " + items.size + " entries from selected document.")
-            } catch(e: Exception) {
-                _state.update { it.copy(error = e.message?.take(160) ?: "Import failed.") }
+                append(items, "Imported " + items.size + " entries. Search below using a word from the document.")
+            } catch (e: Exception) {
+                _state.update { it.copy(error = e.message?.take(200) ?: "Import failed.",
+                    message = "Import failed. Select another document or retry after dismissing the error.") }
             } finally { _state.update { it.copy(busy = false) } }
         }
     }
     fun importPhoto(uri: Uri) {
-        if (_state.value.busy || _state.value.error != null) return
+        if (_state.value.busy || _state.value.vaultUnavailable) {
+            _state.update { it.copy(message = "Import unavailable while archive is locked or busy.") }
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
-            _state.update { it.copy(busy = true, message = "Recognizing text locally...") }
+            _state.update { it.copy(busy = true, error = null,
+                message = "Recognizing text and labels on selected photo...") }
             try {
-                append(listOf(parser.readSelectedPhoto(uri)), "Saved selected photo text.")
-            } catch(e: Exception) {
-                _state.update { it.copy(error = e.message?.take(160) ?: "Image import failed.") }
+                append(listOf(parser.readSelectedPhoto(uri)), "Saved selected photo recognition results.")
+            } catch (e: Exception) {
+                _state.update { it.copy(error = e.message?.take(200) ?: "Image import failed.",
+                    message = "Photo import failed. Try another selected image.") }
             } finally { _state.update { it.copy(busy = false) } }
         }
     }
