@@ -75,7 +75,10 @@ class ContextViewModel(application: Application) : AndroidViewModel(application)
         prefs.edit().putBoolean("sensors", enabled).apply()
         _state.value = _state.value.copy(sensorsEnabled = enabled, error = null,
             status = if (enabled) "Reading sensors while this screen is open."
-                     else "Sensors are off.")
+                     else "Sensors are off.",
+            stepsSinceOpen = if (enabled) _state.value.stepsSinceOpen else null,
+            ambientLux = if (enabled) _state.value.ambientLux else null,
+            motionLabel = if (enabled) _state.value.motionLabel else "Unavailable")
         syncSensors()
     }
 
@@ -256,7 +259,7 @@ private class SnapshotDatabase(context: Context) :
 
     fun save(value: String) {
         writableDatabase.execSQL("INSERT INTO snapshots(at_ms, summary) VALUES(?, ?)",
-            arrayOf(System.currentTimeMillis(), value))
+            arrayOf<Any>(System.currentTimeMillis(), value))
         writableDatabase.execSQL("DELETE FROM snapshots WHERE id NOT IN (SELECT id FROM snapshots ORDER BY id DESC LIMIT 100)")
     }
 
