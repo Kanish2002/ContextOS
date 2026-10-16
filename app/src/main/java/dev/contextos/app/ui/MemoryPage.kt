@@ -10,6 +10,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -19,6 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.contextos.app.memory.MemoryPolicy
 import dev.contextos.app.memory.MemoryKind
+import dev.contextos.app.memory.MemoryNote
 import dev.contextos.app.model.AssistantState
 import dev.contextos.app.memory.MemoryState
 import java.text.DateFormat
@@ -28,6 +30,7 @@ import java.util.Date
 fun MemoryPage(
     state: MemoryState,
     add: (String, MemoryKind) -> Unit,
+    edit: (String, String, MemoryKind) -> Unit,
     delete: (String) -> Unit,
     clearAll: () -> Unit,
     export: () -> Unit,
@@ -40,6 +43,31 @@ fun MemoryPage(
     var draft by rememberSaveable { mutableStateOf("") }
     var kind by rememberSaveable { mutableStateOf(MemoryKind.PREFERENCE.name) }
     var summaryDraft by rememberSaveable { mutableStateOf("") }
+    var editing by remember { mutableStateOf<MemoryNote?>(null) }
+    var editDraft by remember { mutableStateOf("") }
+    var editKind by remember { mutableStateOf(MemoryKind.PREFERENCE) }
+    if (editing != null) AlertDialog(
+        onDismissRequest = { editing = null },
+        title = { Text("Edit private memory") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(value = editDraft,
+                    onValueChange = { editDraft = it.take(MemoryPolicy.MAX_NOTE_LENGTH) },
+                    label = { Text("Memory") }, minLines = 3)
+                Row(Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    MemoryKind.entries.forEach { option ->
+                        FilterChip(selected = editKind == option, onClick = { editKind = option },
+                            label = { Text(option.name.lowercase()) })
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = {
+            editing?.let { edit(it.id, editDraft, editKind) }; editing = null
+        }, enabled = editDraft.isNotBlank() && !state.busy) { Text("Save changes") } },
+        dismissButton = { TextButton(onClick = { editing = null }) { Text("Cancel") } }
+    )
     LaunchedEffect(ai.memorySuggestion) {
         ai.memorySuggestion?.let { summaryDraft = it }
     }
@@ -206,6 +234,11 @@ fun MemoryPage(
                             Text(DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
                                 .format(Date(note.createdAtMs)),
                                 style = MaterialTheme.typography.labelSmall, color = color.onSurfaceVariant)
+                        }
+                        IconButton(onClick = {
+                            editing = note; editDraft = note.text; editKind = note.kind
+                        }, enabled = modelIdle && !state.busy && state.error == null) {
+                            Icon(Icons.Default.Edit, contentDescription = "Edit memory")
                         }
                         IconButton(onClick = { delete(note.id) }, enabled = modelIdle && !state.busy && state.error == null) {
                             Icon(Icons.Default.DeleteOutline, contentDescription = "Delete memory")
