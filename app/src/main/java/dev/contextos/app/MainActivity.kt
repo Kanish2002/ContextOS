@@ -3,6 +3,8 @@ package dev.contextos.app
 import android.Manifest
 import android.os.Build
 import android.os.Bundle
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -39,9 +41,17 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import dev.contextos.app.memory.MemoryKind
 import androidx.core.view.WindowCompat
 import dev.contextos.app.insights.InsightEngine
 import dev.contextos.app.insights.InsightInput
+import dev.contextos.app.insights.InsightPreferences
+import dev.contextos.app.insights.InsightFeedback
+import dev.contextos.app.insights.DeviceInsight
+import dev.contextos.app.insights.InsightNotificationScheduler
+import dev.contextos.app.ui.InsightSettingsCard
 import dev.contextos.app.context.ContextState
 import dev.contextos.app.context.ContextViewModel
 import dev.contextos.app.model.*
@@ -61,8 +71,16 @@ class MainActivity : ComponentActivity() {
     private val assistant: AssistantViewModel by viewModels()
     private val contextModel: ContextViewModel by viewModels()
     private val memoryModel: MemoryViewModel by viewModels()
+    private val suggestionSettings by lazy { InsightPreferences(applicationContext) }
+    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        suggestionSettings.notificationsEnabled = granted
+        InsightNotificationScheduler.sync(applicationContext, granted)
+    }
     private val modelPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(assistant::importModel)
+    }
+    private val embeddingPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(memoryModel::importEmbeddingModel)
     }
     private val memoryExporter = registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
         uri?.let(memoryModel::exportPlaintext)
@@ -79,6 +97,7 @@ class MainActivity : ComponentActivity() {
         // Android 15+ enforces edge-to-edge. Consume status, navigation and IME insets in Compose.
         WindowCompat.setDecorFitsSystemWindows(window, false)
         val settings = AppearanceSettings(applicationContext)
+        InsightNotificationScheduler.sync(applicationContext, suggestionSettings.notificationsEnabled)
         setContent {
             val ai by assistant.state.collectAsStateWithLifecycle()
             val context by contextModel.state.collectAsStateWithLifecycle()
@@ -91,13 +110,38 @@ class MainActivity : ComponentActivity() {
             ContextOsTheme(settings) {
                 ContextApp(
                     tab = tab, navigate = { tab = it }, ai = ai, context = context,
-                    memory = memories, appearance = settings,
+                    memory = memories, appearance = settings, insightSettings = suggestionSettings,
+                    requestSuggestionNotifications = { enabled ->
+                        if (!enabled) {
+                            suggestionSettings.notificationsEnabled = false
+                            InsightNotificationScheduler.sync(applicationContext, false)
+                        } else if (Build.VERSION.SDK_INT >= 33 &&
+                            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                                != PackageManager.PERMISSION_GRANTED) {
+                            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        } else {
+                            suggestionSettings.notificationsEnabled = true
+                            InsightNotificationScheduler.sync(applicationContext, true)
+                        }
+                    },
+                    explainSuggestion = { insight ->
+                        if (ai.initialized && !ai.busy && !ai.generating) {
+                            assistant.send("Explain why this locally generated suggestion may be useful: " +
+                                insight.title + ". Rule: " + insight.detail +
+                                ". Observed evidence: " + insight.basedOn +
+                                ". Explain in plain language, distinguish estimates from facts, " +
+                                "and give an optional practical next step. Do not infer health or personal traits.")
+                        }
+                    },
                     importModel = { modelPicker.launch(arrayOf("*/*")) },
                     loadModel = assistant::loadModel, selectBackend = assistant::chooseBackend,
                     send = { prompt ->
-                        assistant.send(prompt,
-                            if (settings.shareContextWithChat) contextModel.currentSummary() else null,
-                            memoryModel.recallForPrompt(prompt))
+                        lifecycleScope.launch {
+                            val memoriesForQuestion = memoryModel.recallForPromptAsync(prompt)
+                            assistant.send(prompt,
+                                if (settings.shareContextWithChat) contextModel.currentSummary() else null,
+                                memoriesForQuestion)
+                        }
                     },
                     newChat = assistant::newChat, clearError = assistant::clearError,
                     toggleSensors = contextModel::setSensorsEnabled,
@@ -118,6 +162,13 @@ class MainActivity : ComponentActivity() {
                     saveSnapshot = contextModel::saveSnapshot,
                     clearHistory = contextModel::clearHistory,
                     addMemory = memoryModel::add,
+                    editMemory = { id, value, kind ->
+                        memoryModel.updateMemory(id, value, kind)
+                        if (memories.includeInChat) assistant.newChat()
+                    },
+                    importEmbedding = { embeddingPicker.launch(arrayOf("application/octet-stream", "*/*")) },
+                    requestMemorySummary = assistant::proposeMemoryFromChat,
+                    dismissMemorySummary = assistant::dismissMemoryProposal,
                     removeMemory = { id ->
                         memoryModel.remove(id)
                         if (memories.includeInChat) assistant.newChat()
@@ -141,12 +192,17 @@ class MainActivity : ComponentActivity() {
 private fun ContextApp(
     tab: Destination, navigate: (Destination) -> Unit,
     ai: AssistantState, context: ContextState, memory: MemoryState, appearance: AppearanceSettings,
+    insightSettings: InsightPreferences, requestSuggestionNotifications: (Boolean) -> Unit,
+    explainSuggestion: (DeviceInsight) -> Unit,
     importModel: () -> Unit, loadModel: () -> Unit, selectBackend: (DeviceBackend) -> Unit,
     send: (String) -> Unit, newChat: () -> Unit, clearError: () -> Unit,
     toggleSensors: (Boolean) -> Unit, requestSteps: () -> Unit, activityAllowed: Boolean,
     requestLocation: () -> Unit, usageAllowed: Boolean, requestUsage: () -> Unit,
     saveSnapshot: () -> Unit, clearHistory: () -> Unit,
-    addMemory: (String) -> Unit, removeMemory: (String) -> Unit,
+    addMemory: (String, MemoryKind) -> Unit,
+    editMemory: (String, String, MemoryKind) -> Unit, removeMemory: (String) -> Unit,
+    importEmbedding: () -> Unit, requestMemorySummary: () -> Unit,
+    dismissMemorySummary: () -> Unit,
     clearMemories: () -> Unit, exportMemories: () -> Unit,
     setMemoryChatConsent: (Boolean) -> Unit
 ) {
@@ -185,7 +241,7 @@ private fun ContextApp(
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text("ContextOS", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("Private by design · Phase 4",
+                    Text("Private by design · Phases 3 + 4",
                         style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant)
                 }
                 if (tab == Destination.CHAT) {
@@ -205,14 +261,19 @@ private fun ContextApp(
             when (tab) {
                 Destination.HOME -> HomePage(ai, context, appearance, openChat = { navigate(Destination.CHAT) },
                     openContext = { navigate(Destination.CONTEXT) },
-                    openMemory = { navigate(Destination.MEMORY) }, savedMemories = memory.notes.size)
+                    openMemory = { navigate(Destination.MEMORY) }, savedMemories = memory.notes.size,
+                    insightSettings = insightSettings,
+                    explainSuggestion = { insight -> explainSuggestion(insight); if (ai.initialized && !ai.busy && !ai.generating) navigate(Destination.CHAT) })
                 Destination.CHAT -> ChatPage(ai, send, importModel, loadModel, newChat, clearError, keyboardVisible)
                 Destination.CONTEXT -> ContextPage(context, toggleSensors, requestSteps, activityAllowed,
                     requestLocation, usageAllowed, requestUsage, saveSnapshot, clearHistory)
-                Destination.MEMORY -> MemoryPage(memory, addMemory, removeMemory,
+                Destination.MEMORY -> MemoryPage(memory, addMemory, editMemory, removeMemory,
                     clearMemories, exportMemories, setMemoryChatConsent,
-                    modelIdle = !ai.busy && !ai.generating)
-                Destination.SETTINGS -> SettingsPage(appearance, ai, importModel, loadModel, selectBackend, clearHistory)
+                    modelIdle = !ai.busy && !ai.generating, ai = ai,
+                    requestSummary = requestMemorySummary, dismissSummary = dismissMemorySummary,
+                    importEmbedding = importEmbedding)
+                Destination.SETTINGS -> SettingsPage(appearance, ai, importModel, loadModel, selectBackend, clearHistory,
+                    insightSettings, requestSuggestionNotifications)
             }
         }
     }
@@ -222,7 +283,8 @@ private fun ContextApp(
 private fun HomePage(
     ai: AssistantState, context: ContextState, appearance: AppearanceSettings,
     openChat: () -> Unit, openContext: () -> Unit,
-    openMemory: () -> Unit, savedMemories: Int
+    openMemory: () -> Unit, savedMemories: Int,
+    insightSettings: InsightPreferences, explainSuggestion: (DeviceInsight) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
     Column(
@@ -254,7 +316,8 @@ private fun HomePage(
                 }
             }
         }
-        InsightsSection(context, appearance, openContext)
+        InsightsSection(context, appearance, openContext, insightSettings,
+            ai.initialized && !ai.busy && !ai.generating, explainSuggestion)
         Surface(onClick = openMemory, color = scheme.surfaceContainerLow,
             shape = RoundedCornerShape(21.dp), modifier = Modifier.fillMaxWidth()) {
             Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -304,7 +367,8 @@ private fun HomePage(
 
 @Composable
 private fun InsightsSection(
-    context: ContextState, appearance: AppearanceSettings, openContext: () -> Unit
+    context: ContextState, appearance: AppearanceSettings, openContext: () -> Unit,
+    insightSettings: InsightPreferences, canExplain: Boolean, explain: (DeviceInsight) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
     SectionTitle("Your insights", "Explainable suggestions, computed locally")
@@ -338,7 +402,12 @@ private fun InsightsSection(
                 hasSavedSnapshot = context.snapshots.isNotEmpty()
             )
         )
-        insights.forEach { insight ->
+        val personalized = insightSettings.applyFeedback(insights)
+        if (personalized.isEmpty()) {
+            Text("You dismissed these suggestions. They will stay hidden unless feedback is reset.",
+                style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+        }
+        personalized.forEach { insight ->
             Surface(color = scheme.surfaceContainerLow, shape = RoundedCornerShape(20.dp)) {
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -352,6 +421,20 @@ private fun InsightsSection(
                         color = scheme.onSurfaceVariant)
                     Text("Why: " + insight.basedOn, style = MaterialTheme.typography.labelSmall,
                         color = scheme.primary)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        TextButton(onClick = {
+                            insightSettings.submitFeedback(insight.id, InsightFeedback.HELPFUL)
+                            insightSettings.rememberSuggestion(insight)
+                        }) { Text(if (insightSettings.feedback(insight.id) == InsightFeedback.HELPFUL) "✓ Helpful" else "Helpful") }
+                        TextButton(onClick = { insightSettings.submitFeedback(insight.id, InsightFeedback.NOT_HELPFUL) }) {
+                            Text("Not helpful")
+                        }
+                    }
+                    TextButton(onClick = { explain(insight) }, enabled = canExplain) {
+                        Icon(Icons.Default.AutoAwesome, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Explain with offline AI")
+                    }
                 }
             }
         }
@@ -648,7 +731,8 @@ private fun SourceCard(
 @Composable
 private fun SettingsPage(
     appearance: AppearanceSettings, ai: AssistantState, importModel: () -> Unit,
-    loadModel: () -> Unit, selectBackend: (DeviceBackend) -> Unit, clearHistory: () -> Unit
+    loadModel: () -> Unit, selectBackend: (DeviceBackend) -> Unit, clearHistory: () -> Unit,
+    insightSettings: InsightPreferences, requestSuggestionNotifications: (Boolean) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp),
@@ -710,7 +794,7 @@ private fun SettingsPage(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Enable explainable recommendations")
-                        Text("Generate suggestions on Home from available foreground context. No automatic monitoring, notifications or cloud inference.",
+                        Text("Generate local rules-based suggestions using opted-in context. Any AI explanation runs only when requested.",
                             style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
                     }
                     Spacer(Modifier.width(8.dp))
@@ -746,7 +830,8 @@ private fun SettingsPage(
                 }
             }
         }
-        Text("ContextOS · Phase 3 preview · Local-only intelligence",
+        InsightSettingsCard(insightSettings, requestSuggestionNotifications)
+        Text("ContextOS · Offline-first personal intelligence",
             color = scheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall,
             modifier = Modifier.align(Alignment.CenterHorizontally))
         Spacer(Modifier.height(12.dp))

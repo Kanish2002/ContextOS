@@ -61,7 +61,9 @@ class EncryptedMemoryVault(context: Context) {
         return List(entries.length()) { index ->
             val record = entries.getJSONObject(index)
             MemoryNote(record.getString("id"), MemoryPolicy.normalize(record.getString("text")),
-                record.getLong("createdAtMs"))
+                record.getLong("createdAtMs"), runCatching {
+                    MemoryKind.valueOf(record.optString("kind", "NOTE"))
+                }.getOrDefault(MemoryKind.NOTE))
         }
     }
 
@@ -70,7 +72,7 @@ class EncryptedMemoryVault(context: Context) {
         val rows = JSONArray()
         notes.forEach { note ->
             rows.put(JSONObject().put("id", note.id).put("text", MemoryPolicy.normalize(note.text))
-                .put("createdAtMs", note.createdAtMs))
+                .put("createdAtMs", note.createdAtMs).put("kind", note.kind.name))
         }
         val clear = JSONObject().put("version", 1).put("notes", rows).toString()
             .toByteArray(Charsets.UTF_8)

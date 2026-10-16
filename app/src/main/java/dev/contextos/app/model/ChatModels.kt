@@ -26,5 +26,6 @@ data class AssistantState(
     val messages: List<ChatMessage> = emptyList(),
     val benchmark: Benchmark? = null,
     val error: String? = null,
+    val memorySuggestion: String? = null,
     val deviceRamBytes: Long = 0
 )
