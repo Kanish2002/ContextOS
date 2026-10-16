@@ -107,9 +107,16 @@ class GoogleGateway(private val activity: Activity) {
                     val start = e.optJSONObject("start")?.let {
                         it.optString("dateTime", it.optString("date"))
                     } ?: ""
+                    val dueAt = runCatching {
+                        if (start.length == 10)
+                            java.time.LocalDate.parse(start).atStartOfDay(
+                                java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        else java.time.OffsetDateTime.parse(start).toInstant().toEpochMilli()
+                    }.getOrNull()
                     KnowledgeEntry(title = e.optString("summary", "Calendar event").take(150),
                         body = "Scheduled " + start + ". " + e.optString("description", "").take(1000),
-                        source = "Selected Google Calendar event", category = "CAREER")
+                        source = "Selected Google Calendar event", category = "CAREER",
+                        dueAt = dueAt)
                 }
             }
         }
@@ -166,7 +173,7 @@ class GoogleGateway(private val activity: Activity) {
             require(original.isNotBlank()) { "This selected Google item contains no readable text." }
             KnowledgeEntry(title = entry.title,
                 body = original, source = "Explicitly imported " +
-                    if (grantedScope == GoogleScope.GMAIL) "Gmail message" else "Drive text document",
+                    (if (grantedScope == GoogleScope.GMAIL) "Gmail message" else "Drive text document"),
                 category = entry.category)
         }
 
