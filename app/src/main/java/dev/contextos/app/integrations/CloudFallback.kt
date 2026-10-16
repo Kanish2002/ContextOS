@@ -26,6 +26,7 @@ object CloudFallback {
             connection.doOutput = true
             connection.connectTimeout = 12000
             connection.readTimeout = 30000
+            connection.instanceFollowRedirects = false
             connection.setRequestProperty("Content-Type", "application/json")
             if (apiKey.isNotBlank()) connection.setRequestProperty("Authorization", "Bearer " + apiKey)
             val payload = JSONObject().put("model", model).put("stream", false)
