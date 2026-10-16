@@ -18,6 +18,8 @@ import java.util.UUID
 data class MemoryState(
     val notes: List<MemoryNote> = emptyList(),
     val includeInChat: Boolean = false,
+    val embeddingReady: Boolean = false,
+    val embeddingStatus: String = "Optional semantic embedding model not imported.",
     val loading: Boolean = true,
     val busy: Boolean = false,
     val status: String = "Opening encrypted memory vault...",
@@ -28,10 +30,13 @@ data class MemoryState(
 class MemoryViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application
     private val vault = EncryptedMemoryVault(application)
+    private val semantic = LocalSemanticRetriever(application)
     private val mutex = Mutex()
     private val prefs = application.getSharedPreferences("contextos_memory_choices", Context.MODE_PRIVATE)
     private val _state = MutableStateFlow(
-        MemoryState(includeInChat = prefs.getBoolean("include_saved_memories_in_chat", false))
+        MemoryState(includeInChat = prefs.getBoolean("include_saved_memories_in_chat", false),
+            embeddingReady = semantic.available(), embeddingStatus = if (semantic.available())
+                "On-device semantic embeddings available" else "Import a compatible .tflite Text Embedder model")
     )
     val state: StateFlow<MemoryState> = _state.asStateFlow()
 
@@ -67,10 +72,35 @@ class MemoryViewModel(application: Application) : AndroidViewModel(application) 
         return MemoryPolicy.promptContext(prompt, snapshot.notes)
     }
 
-    fun add(raw: String) {
+    suspend fun recallForPromptAsync(prompt: String): String? {
+        val snapshot = _state.value
+        if (!snapshot.includeInChat || snapshot.loading || snapshot.error != null) return null
+        val match = semantic.retrieve(prompt, snapshot.notes)
+        return match?.takeIf { _state.value.includeInChat && _state.value.error == null }
+    }
+
+    fun importEmbeddingModel(uri: Uri) {
+        if (_state.value.loading || _state.value.busy) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _state.update { it.copy(busy = true, embeddingStatus = "Validating imported Text Embedder model...") }
+            try {
+                semantic.importModel(uri)
+                _state.update { it.copy(embeddingReady = true,
+                    embeddingStatus = "Semantic retrieval enabled. Everything runs on device.",
+                    status = "Text Embedder model imported successfully.") }
+            } catch (error: Exception) {
+                _state.update { it.copy(embeddingReady = semantic.available(),
+                    embeddingStatus = "Import failed: " + (error.message ?: "incompatible model").take(100)) }
+            } finally {
+                _state.update { it.copy(busy = false) }
+            }
+        }
+    }
+
+    fun add(raw: String, kind: MemoryKind = MemoryKind.NOTE) {
         if (_state.value.loading || _state.value.busy || _state.value.error != null) return
         edit("Memory saved to your encrypted vault.") { old ->
-            MemoryPolicy.add(old, raw, UUID.randomUUID().toString(), System.currentTimeMillis())
+            MemoryPolicy.add(old, raw, UUID.randomUUID().toString(), System.currentTimeMillis(), kind)
         }
     }
 
@@ -96,6 +126,7 @@ class MemoryViewModel(application: Application) : AndroidViewModel(application) 
                     val old = if (allowRecovery) emptyList() else vault.read()
                     val updated = change(old)
                     vault.write(updated)
+                    semantic.clearIndex()
                     _state.update { it.copy(notes = updated, busy = false,
                         error = null, status = successMessage) }
                 } catch (failure: Exception) {
