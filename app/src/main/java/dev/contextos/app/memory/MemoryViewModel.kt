@@ -104,6 +104,15 @@ class MemoryViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun updateMemory(id: String, text: String, kind: MemoryKind) {
+        if (_state.value.loading || _state.value.busy || _state.value.error != null) return
+        edit("Memory updated in encrypted vault.") { old ->
+            require(old.any { it.id == id }) { "Memory no longer exists." }
+            old.map { item -> if (item.id == id)
+                item.copy(text = MemoryPolicy.normalize(text), kind = kind) else item }
+        }
+    }
+
     fun remove(id: String) {
         if (_state.value.loading || _state.value.busy || _state.value.error != null) return
         edit("Memory deleted from your encrypted vault.") { old -> old.filterNot { it.id == id } }
