@@ -32,8 +32,8 @@ object InsightEngine {
         if (input.sensing && light != null && light >= 0f && light < 80f) {
             suggestions += DeviceInsight(
                 "light", "Consider a brighter workspace",
-                "The currently observed light level is low. If you are reading, a brighter spot may be more comfortable.",
-                "Ambient light sensor · " + light.toInt() + " lux", 90
+                "The recent foreground light reading was low. If you are reading, a brighter spot may be more comfortable.",
+                "Recent foreground light reading · " + light.toInt() + " lux", 90
             )
         }
 
@@ -49,8 +49,8 @@ object InsightEngine {
         if (input.sensing && input.motionLabel == "Low motion" && minutes != null && minutes >= 120L) {
             suggestions += DeviceInsight(
                 "move", "Try a brief movement break",
-                "The most recent reading indicates low phone motion and the daily usage estimate is elevated. This does not establish how long you have been sitting.",
-                "Current motion + 24-hour app usage", 70
+                "The latest foreground reading indicates low phone motion and the daily usage estimate is elevated. This does not establish how long you have been sitting.",
+                "Recent foreground motion + 24-hour app usage", 70
             )
         }
 
