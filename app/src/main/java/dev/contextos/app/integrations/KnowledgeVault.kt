@@ -29,7 +29,8 @@ data class KnowledgeEntry(
     val category: String = "NOTE",
     val done: Boolean = false,
     val dueAt: Long? = null,
-    val durationMinutes: Int? = null
+    val durationMinutes: Int? = null,
+    val location: String? = null
 )
 
 object KnowledgeSearch {
@@ -122,7 +123,8 @@ class KnowledgeVault(context: Context) {
                 o.optBoolean("done", false), if (o.has("dueAt") && !o.isNull("dueAt"))
                     o.getLong("dueAt") else null,
                 if (o.has("durationMinutes") && !o.isNull("durationMinutes"))
-                    o.getInt("durationMinutes") else null)
+                    o.getInt("durationMinutes") else null,
+                o.optString("location").takeIf { it.isNotBlank() })
         }
     }
     fun write(items: List<KnowledgeEntry>) {
@@ -134,7 +136,8 @@ class KnowledgeVault(context: Context) {
             rows.put(JSONObject().put("id", it.id).put("title", it.title)
                 .put("body", it.body).put("source", it.source).put("createdAt", it.createdAt)
                 .put("category", it.category).put("done", it.done)
-                .put("dueAt", it.dueAt).put("durationMinutes", it.durationMinutes))
+                .put("dueAt", it.dueAt).put("durationMinutes", it.durationMinutes)
+                .put("location", it.location?.take(200)))
         }
         val plaintext = JSONObject().put("version", 1).put("items", rows)
             .toString().toByteArray(Charsets.UTF_8)
