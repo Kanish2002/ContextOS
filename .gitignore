@@ -10,5 +10,7 @@ local.properties
 *.part
 .DS_Store
 
-# Bundled AI weights must be downloaded during build, never committed
+# Never commit or bundle AI model weights; the user imports them on device
 app/src/main/assets/models/*.litertlm
+app/src/main/assets/models/*.tflite
+app/src/main/assets/models/*.task

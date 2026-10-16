@@ -1,6 +1,6 @@
 # ContextOS — Phase 1 · On-device AI for Android
 
-**Status:** Source-code starter, ready for an Android SDK/Gradle build and physical-device validation. Not yet a verified APK.
+**Build:** Pushes to `main` build and test a model-free debug APK through GitHub Actions. On-device inference still requires a compatible model imported by the user.
 
 ContextOS is an offline-first Android personal AI prototype. Phase 1 is a **local model chat and benchmark harness**. Phone sensors, Google Maps, Health Connect, calendar, personal memory, and background agents are intentionally deferred to later phases. The app does not request internet, location, microphone, camera or broad storage permissions.
 
@@ -86,3 +86,21 @@ Once the device runs model load and generation reliably: add activity context (w
 ## Licensing
 
 This starter's original code may be used as a foundation for your app. Third-party dependencies and Google Gemma model weights retain their own licenses and terms; the downloaded model isn't redistributed here.
+
+
+## GitHub Actions: APK only, on main pushes
+
+The only build workflow is [`.github/workflows/android.yml`](.github/workflows/android.yml).
+It runs **only when a commit is pushed to `main`**, not for pull requests,
+feature-branch pushes, or manual runs. It runs unit tests, builds
+`app-debug.apk`, verifies that it does not contain AI model weights,
+and publishes the `ContextOS-Debug-APK-main` artifact for installation.
+
+**No Qwen/Gemma model is downloaded or bundled.** Download a compatible
+`.litertlm` file yourself, transfer it to your phone, open ContextOS,
+tap **Import**, pick the file, and tap **Load model**. Model files remain
+private on your device. The app has no INTERNET permission.
+
+For a local build: `gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug`.
+The old Qwen-bundled workflow was removed. Historic GitHub Actions runs may
+remain visible in Actions history but cannot start a new Qwen model build.
