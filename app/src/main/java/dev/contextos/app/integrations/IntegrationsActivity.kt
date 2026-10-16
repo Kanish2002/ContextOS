@@ -124,6 +124,10 @@ class IntegrationsActivity : ComponentActivity() {
                         } else updateDeadlineAlerts(true)
                     },
                     voice = ::startVoice,
+                    askOffline = { spoken ->
+                        startActivity(Intent(this, dev.contextos.app.MainActivity::class.java)
+                            .putExtra("voice_prompt", spoken))
+                    },
                     route = ::openRoute,
                     remote = { endpoint, key, model, question ->
                         lifecycleScope.launch {
@@ -221,7 +225,8 @@ private fun IntegrationsScreen(
     calendar: () -> Unit, health: () -> Unit, notifications: () -> Unit,
     google: (GoogleScope) -> Unit, disconnectGoogle: () -> Unit,
     agentReminders: Boolean, toggleReminders: (Boolean) -> Unit,
-    voice: () -> Unit, route: (String) -> Unit,
+    voice: () -> Unit, askOffline: (String) -> Unit,
+    route: (String) -> Unit,
     remote: (String, String, String, String) -> Unit
 ) {
     var title by remember { mutableStateOf("") }
@@ -319,6 +324,9 @@ private fun IntegrationsScreen(
                 title = ""; detail = ""; due = ""
             }, enabled = title.isNotBlank() && detail.isNotBlank() && !state.busy) { Text("Save encrypted") }
             OutlinedButton(onClick = voice) { Text("Dictate note (speech service)") }
+            if (voiceText.isNotBlank()) OutlinedButton(onClick = { askOffline(voiceText) }) {
+                Text("Ask offline AI about dictated text")
+            }
             Text("Android speech services may use the network despite offline preference. Review text before saving.",
                 style = MaterialTheme.typography.bodySmall)
         }
