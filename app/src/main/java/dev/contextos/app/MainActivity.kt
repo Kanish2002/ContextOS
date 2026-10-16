@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import dev.contextos.app.memory.MemoryKind
 import dev.contextos.app.integrations.KnowledgeViewModel
 import dev.contextos.app.integrations.IntegrationsActivity
@@ -78,6 +79,22 @@ class MainActivity : ComponentActivity() {
     private val contextModel: ContextViewModel by viewModels()
     private val memoryModel: MemoryViewModel by viewModels()
     private val suggestionSettings by lazy { InsightPreferences(applicationContext) }
+    private var lastKnowledgeRevision: String? = null
+
+    override fun onResume() {
+        super.onResume()
+        val revision = getSharedPreferences("contextos_knowledge_choices", MODE_PRIVATE)
+            .getString("privacy_revision", "") ?: ""
+        if (lastKnowledgeRevision != null && revision != lastKnowledgeRevision) {
+            // The user edited/revoked archived context while the integration screen was open.
+            // Reset active model state as soon as it is safe; old excerpts must not linger.
+            lifecycleScope.launch {
+                assistant.state.first { !it.generating && !it.busy }
+                assistant.newChat()
+            }
+        }
+        lastKnowledgeRevision = revision
+    }
     private val speechDelegate = lazy {
         OfflineSpeechSpeaker(applicationContext) { message ->
             runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
