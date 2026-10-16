@@ -23,7 +23,14 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -32,6 +39,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.core.view.WindowCompat
+import dev.contextos.app.insights.InsightEngine
+import dev.contextos.app.insights.InsightInput
 import dev.contextos.app.context.ContextState
 import dev.contextos.app.context.ContextViewModel
 import dev.contextos.app.model.*
@@ -59,6 +69,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Android 15+ enforces edge-to-edge. Consume status, navigation and IME insets in Compose.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         val settings = AppearanceSettings(applicationContext)
         setContent {
             val ai by assistant.state.collectAsStateWithLifecycle()
@@ -113,10 +125,12 @@ private fun ContextApp(
     saveSnapshot: () -> Unit, clearHistory: () -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
+    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     Scaffold(
         containerColor = scheme.background,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
-            NavigationBar(containerColor = scheme.surfaceContainerLow, tonalElevation = 0.dp) {
+            if (!keyboardVisible) NavigationBar(containerColor = scheme.surfaceContainerLow, tonalElevation = 0.dp) {
                 Destination.entries.forEach { item ->
                     val icon = when (item) {
                         Destination.HOME -> Icons.Default.Home
@@ -134,7 +148,7 @@ private fun ContextApp(
         },
         topBar = {
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 15.dp),
+                Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Surface(shape = RoundedCornerShape(15.dp), color = scheme.primaryContainer) {
@@ -144,7 +158,7 @@ private fun ContextApp(
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text("ContextOS", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("Private by design · Phase 2",
+                    Text("Private by design · Phase 3",
                         style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant)
                 }
                 if (tab == Destination.CHAT) {
@@ -160,11 +174,11 @@ private fun ContextApp(
             }
         }
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
+        Box(Modifier.fillMaxSize().padding(padding).imePadding()) {
             when (tab) {
-                Destination.HOME -> HomePage(ai, context, openChat = { navigate(Destination.CHAT) },
+                Destination.HOME -> HomePage(ai, context, appearance, openChat = { navigate(Destination.CHAT) },
                     openContext = { navigate(Destination.CONTEXT) })
-                Destination.CHAT -> ChatPage(ai, send, importModel, loadModel, newChat, clearError)
+                Destination.CHAT -> ChatPage(ai, send, importModel, loadModel, newChat, clearError, keyboardVisible)
                 Destination.CONTEXT -> ContextPage(context, toggleSensors, requestSteps, activityAllowed,
                     requestLocation, usageAllowed, requestUsage, saveSnapshot, clearHistory)
                 Destination.SETTINGS -> SettingsPage(appearance, ai, importModel, loadModel, selectBackend, clearHistory)
@@ -174,7 +188,7 @@ private fun ContextApp(
 }
 
 @Composable
-private fun HomePage(ai: AssistantState, context: ContextState, openChat: () -> Unit, openContext: () -> Unit) {
+private fun HomePage(ai: AssistantState, context: ContextState, appearance: AppearanceSettings, openChat: () -> Unit, openContext: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
@@ -205,6 +219,7 @@ private fun HomePage(ai: AssistantState, context: ContextState, openChat: () -> 
                 }
             }
         }
+        InsightsSection(context, appearance, openContext)
         SectionTitle("Your signals", "Live when you enable a source")
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             MetricTile("Movement", context.motionLabel.takeIf { context.sensing } ?: "Off", Icons.Default.DirectionsWalk,
@@ -231,9 +246,66 @@ private fun HomePage(ai: AssistantState, context: ContextState, openChat: () -> 
                 Icon(Icons.Default.ChevronRight, null, tint = scheme.onSurfaceVariant)
             }
         }
-        Text("No automatic recommendations yet. Phase 2 collects real signals; recommendation ranking comes next.",
+        Text("Insights are local and rule-based, not medical, behavioral or location predictions.",
             style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
         Spacer(Modifier.height(12.dp))
+    }
+}
+
+
+@Composable
+private fun InsightsSection(
+    context: ContextState, appearance: AppearanceSettings, openContext: () -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    SectionTitle("Your insights", "Explainable suggestions, computed locally")
+    if (!appearance.insightsEnabled) {
+        Surface(color = scheme.surfaceContainerLow, shape = RoundedCornerShape(20.dp)) {
+            Column(Modifier.fillMaxWidth().padding(17.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Your context stays yours", fontWeight = FontWeight.SemiBold)
+                Text("Turn on on-device insights to see suggestions from explicitly enabled or saved signals. Off by default.",
+                    style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+                TextButton(onClick = { appearance.setInsightsEnabled(true) }) {
+                    Text("Enable local insights")
+                    Spacer(Modifier.width(4.dp))
+                    Icon(Icons.Default.ArrowForward, contentDescription = null, modifier = Modifier.size(18.dp))
+                }
+            }
+        }
+    } else {
+        val insights = InsightEngine.recommendations(
+            InsightInput(
+                enabled = true,
+                sensing = context.sensing,
+                ambientLux = if (context.sensing) context.ambientLux else null,
+                motionLabel = context.motionLabel,
+                stepsSinceOpen = context.stepsSinceOpen,
+                appUseMinutes = context.appUseMinutes,
+                hasSavedSnapshot = context.snapshots.isNotEmpty()
+            )
+        )
+        insights.forEach { insight ->
+            Surface(color = scheme.surfaceContainerLow, shape = RoundedCornerShape(20.dp)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.TipsAndUpdates, null, tint = scheme.primary,
+                            modifier = Modifier.size(21.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Text(insight.title, style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold)
+                    }
+                    Text(insight.detail, style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant)
+                    Text("Why: " + insight.basedOn, style = MaterialTheme.typography.labelSmall,
+                        color = scheme.primary)
+                }
+            }
+        }
+        TextButton(onClick = openContext) {
+            Text("Manage data sources")
+            Spacer(Modifier.width(5.dp))
+            Icon(Icons.Default.ArrowForward, contentDescription = null, modifier = Modifier.size(18.dp))
+        }
     }
 }
 
@@ -261,16 +333,28 @@ private fun SectionTitle(title: String, hint: String? = null) {
 @Composable
 private fun ChatPage(
     state: AssistantState, send: (String) -> Unit, importModel: () -> Unit, loadModel: () -> Unit,
-    newChat: () -> Unit, clearError: () -> Unit
+    newChat: () -> Unit, clearError: () -> Unit, keyboardVisible: Boolean
 ) {
     val scheme = MaterialTheme.colorScheme
-    var draft by remember { mutableStateOf("") }
+    var draft by rememberSaveable { mutableStateOf("") }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focus = LocalFocusManager.current
+    val focusRequester = remember { FocusRequester() }
+    val submit: () -> Unit = {
+        if (draft.isNotBlank()) {
+            val prompt = draft
+            draft = ""
+            send(prompt)
+            keyboard?.hide()
+            focus.clearFocus()
+        }
+    }
     val listState = rememberLazyListState()
-    LaunchedEffect(state.messages.size) {
+    LaunchedEffect(state.messages.size, keyboardVisible) {
         if (state.messages.isNotEmpty()) listState.animateScrollToItem(state.messages.lastIndex)
     }
     Column(Modifier.fillMaxSize()) {
-        Surface(color = scheme.surfaceContainerLow, shape = RoundedCornerShape(18.dp),
+        if (!keyboardVisible || !state.initialized) Surface(color = scheme.surfaceContainerLow, shape = RoundedCornerShape(18.dp),
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -305,7 +389,7 @@ private fun ChatPage(
                 }
             }
         }
-        if (state.messages.isEmpty()) {
+        if (state.messages.isEmpty() && !keyboardVisible) {
             Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 28.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -324,7 +408,7 @@ private fun ChatPage(
                 Spacer(Modifier.height(19.dp))
                 listOf("Help me organize this afternoon", "Explain event-driven architecture",
                     "Give me a focused learning plan").forEach { prompt ->
-                    OutlinedCard(onClick = { draft = prompt },
+                    OutlinedCard(onClick = { draft = prompt; focusRequester.requestFocus(); keyboard?.show() },
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         shape = RoundedCornerShape(16.dp)) {
                         Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -338,13 +422,15 @@ private fun ChatPage(
                     }
                 }
             }
+        } else if (state.messages.isEmpty()) {
+            Spacer(Modifier.weight(1f))
         } else {
             LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
                 items(state.messages, key = { it.id }) { message -> ChatBubble(message) }
             }
         }
-        state.benchmark?.let { b ->
+        if (!keyboardVisible) state.benchmark?.let { b ->
             val facts = buildList {
                 b.firstChunkMillis?.let { add("First response ${it}ms") }
                 b.generateMillis?.let { add("Total ${it}ms") }
@@ -358,22 +444,25 @@ private fun ChatPage(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
             Row(Modifier.padding(8.dp), verticalAlignment = Alignment.Bottom) {
                 OutlinedTextField(
-                    value = draft, onValueChange = { draft = it }, modifier = Modifier.weight(1f),
+                    value = draft, onValueChange = { draft = it },
+                    modifier = Modifier.weight(1f).focusRequester(focusRequester),
                     placeholder = { Text("Ask anything offline…") }, maxLines = 5,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = { submit() }),
                     enabled = state.initialized && !state.busy && !state.generating,
                     shape = RoundedCornerShape(18.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent)
                 )
                 Spacer(Modifier.width(6.dp))
-                FilledIconButton(onClick = { val text = draft; draft = ""; send(text) },
+                FilledIconButton(onClick = submit,
                     enabled = draft.isNotBlank() && state.initialized && !state.busy && !state.generating,
                     modifier = Modifier.size(48.dp)) {
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send message")
                 }
             }
         }
-        Text("100% on-device model · No cloud inference",
+        if (!keyboardVisible) Text("100% on-device model · No cloud inference",
             style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant,
             modifier = Modifier.align(Alignment.CenterHorizontally).padding(bottom = 5.dp))
     }
@@ -582,7 +671,7 @@ private fun SettingsPage(
                 }
             }
         }
-        Text("ContextOS · Phase 2 preview · Local-only data collection",
+        Text("ContextOS · Phase 3 preview · Local-only intelligence",
             color = scheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall,
             modifier = Modifier.align(Alignment.CenterHorizontally))
         Spacer(Modifier.height(12.dp))
