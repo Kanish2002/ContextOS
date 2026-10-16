@@ -31,6 +31,8 @@ class AppearanceSettings(context: Context) {
         private set
     var shareContextWithChat by mutableStateOf(prefs.getBoolean("share_context_with_chat", false))
         private set
+    var insightsEnabled by mutableStateOf(prefs.getBoolean("insights_enabled", false))
+        private set
 
     fun setTheme(value: ThemeChoice) {
         choice = value
@@ -45,6 +47,11 @@ class AppearanceSettings(context: Context) {
     fun setShareContext(value: Boolean) {
         shareContextWithChat = value
         prefs.edit().putBoolean("share_context_with_chat", value).apply()
+    }
+
+    fun updateInsightsConsent(value: Boolean) {
+        insightsEnabled = value
+        prefs.edit().putBoolean("insights_enabled", value).apply()
     }
 }
 

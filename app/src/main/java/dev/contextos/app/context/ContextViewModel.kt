@@ -37,6 +37,7 @@ data class ContextState(
     val sensing: Boolean = false,
     val stepsSinceOpen: Int? = null,
     val ambientLux: Float? = null,
+    val lastSensorObservedAtMs: Long? = null,
     val motionLabel: String = "Unavailable",
     val locationArea: String? = null,
     val appUseMinutes: Long? = null,
@@ -130,7 +131,8 @@ class ContextViewModel(application: Application) : AndroidViewModel(application)
                 if (baselineSteps == null || total < baselineSteps!!) baselineSteps = total
                 _state.value = _state.value.copy(stepsSinceOpen = total - (baselineSteps ?: total))
             }
-            Sensor.TYPE_LIGHT -> _state.value = _state.value.copy(ambientLux = event.values[0])
+            Sensor.TYPE_LIGHT -> _state.value = _state.value.copy(
+                ambientLux = event.values[0], lastSensorObservedAtMs = System.currentTimeMillis())
             Sensor.TYPE_ACCELEROMETER -> {
                 val now = SystemClock.elapsedRealtime()
                 if (now - previousMotionUpdate < 900L) return
@@ -139,7 +141,8 @@ class ContextViewModel(application: Application) : AndroidViewModel(application)
                 val magnitude = sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2])
                 val delta = abs(magnitude - SensorManager.GRAVITY_EARTH)
                 _state.value = _state.value.copy(
-                    motionLabel = if (delta > 1.8f) "Motion detected" else "Low motion")
+                    motionLabel = if (delta > 1.8f) "Motion detected" else "Low motion",
+                    lastSensorObservedAtMs = System.currentTimeMillis())
             }
         }
     }

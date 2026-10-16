@@ -37,8 +37,9 @@ class LocalInferenceEngine {
                         systemInstruction = Contents.of(
                             "You are ContextOS, an offline personal assistant. " +
                             "Be helpful and concise. Do not claim to have access to " +
-                            "sensors, personal files, calendar, location, or internet: " +
-                            "none is connected in this version."
+                            "live sensors, personal files, calendar, location, or internet. " +
+                            "Only use optional approximate context explicitly attached to the user message; " +
+                            "never claim independent access to device data."
                         ),
                         maxOutputToken = 384
                     )
@@ -63,7 +64,8 @@ class LocalInferenceEngine {
             ConversationConfig(
                 systemInstruction = Contents.of(
                     "You are ContextOS, a helpful offline personal assistant. " +
-                    "No phone data sources are connected in Phase 1."
+                    "Device context is available only when the user opts to attach a summary to a message. " +
+                    "Do not pretend to have any live sensors or network access."
                 ),
                 maxOutputToken = 384
             )
