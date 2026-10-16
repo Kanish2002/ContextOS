@@ -108,3 +108,14 @@ The Phase 2 preview adds:
 **Tests needed on a device:** permissions, switching to Android settings and returning, theme persistence across app restarts, live sensor lifecycle, step counter availability, approximate location on different providers, and local inference with optional context.
 
 The bundled-model workflow also runs automatically on the Phase 2 feature branch to produce a test APK for the redesigned app.
+
+
+## Phase 3 preview — explainable local insights and keyboard fixes
+
+Phase 3's first slice is implemented in `feature/phase3-insights-keyboard-fixes`.
+The opt-in Insights section on Home evaluates explicitly collected, recent phone
+signals through a deterministic local rule engine. It shows why each suggestion
+appeared; there is no AI inference for insights, background tracking, or network.
+Android edge-to-edge/IME fixes keep the chat composer visible while Gboard is open
+and prevent the toolbar overlapping status bar content on Android 15.
+See [PHASE3.md](PHASE3.md) for the detailed scope, remaining work and device QA.
