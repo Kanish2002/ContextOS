@@ -106,3 +106,5 @@ The Phase 2 preview adds:
 **Build:** Pushes/PRs run the source-only workflow. For a single installable APK including the Qwen model, manually run **Actions → Build APK with offline Qwen model → Run workflow**, selecting the updated branch. If an existing debug APK was signed with a different CI-generated debug keystore, Android may require uninstalling it first (which deletes the old app's local data).
 
 **Tests needed on a device:** permissions, switching to Android settings and returning, theme persistence across app restarts, live sensor lifecycle, step counter availability, approximate location on different providers, and local inference with optional context.
+
+The bundled-model workflow also runs automatically on the Phase 2 feature branch to produce a test APK for the redesigned app.

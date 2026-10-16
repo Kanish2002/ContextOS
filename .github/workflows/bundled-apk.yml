@@ -2,6 +2,9 @@ name: Build APK with offline Qwen model
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feature/phase2-context-ux
   workflow_run:
     workflows: ['Android CI (source-only build)']
     types: [completed]
