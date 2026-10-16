@@ -42,7 +42,8 @@ object DeviceBridge {
                         body = ("Upcoming calendar event: " +
                             Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault()) +
                             ". Location: " + place + ". " + details).take(6000),
-                        category = "CAREER", source = "Selected Android calendar event", dueAt = time)
+                        category = "CAREER", source = "Selected Android calendar event",
+                        dueAt = time, location = place.take(200))
                 }
             }
         return data
