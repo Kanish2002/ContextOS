@@ -162,6 +162,10 @@ class MainActivity : ComponentActivity() {
                     saveSnapshot = contextModel::saveSnapshot,
                     clearHistory = contextModel::clearHistory,
                     addMemory = memoryModel::add,
+                    editMemory = { id, value, kind ->
+                        memoryModel.updateMemory(id, value, kind)
+                        if (memories.includeInChat) assistant.newChat()
+                    },
                     importEmbedding = { embeddingPicker.launch(arrayOf("application/octet-stream", "*/*")) },
                     requestMemorySummary = assistant::proposeMemoryFromChat,
                     dismissMemorySummary = assistant::dismissMemoryProposal,
@@ -195,7 +199,8 @@ private fun ContextApp(
     toggleSensors: (Boolean) -> Unit, requestSteps: () -> Unit, activityAllowed: Boolean,
     requestLocation: () -> Unit, usageAllowed: Boolean, requestUsage: () -> Unit,
     saveSnapshot: () -> Unit, clearHistory: () -> Unit,
-    addMemory: (String, MemoryKind) -> Unit, removeMemory: (String) -> Unit,
+    addMemory: (String, MemoryKind) -> Unit,
+    editMemory: (String, String, MemoryKind) -> Unit, removeMemory: (String) -> Unit,
     importEmbedding: () -> Unit, requestMemorySummary: () -> Unit,
     dismissMemorySummary: () -> Unit,
     clearMemories: () -> Unit, exportMemories: () -> Unit,
@@ -262,7 +267,7 @@ private fun ContextApp(
                 Destination.CHAT -> ChatPage(ai, send, importModel, loadModel, newChat, clearError, keyboardVisible)
                 Destination.CONTEXT -> ContextPage(context, toggleSensors, requestSteps, activityAllowed,
                     requestLocation, usageAllowed, requestUsage, saveSnapshot, clearHistory)
-                Destination.MEMORY -> MemoryPage(memory, addMemory, removeMemory,
+                Destination.MEMORY -> MemoryPage(memory, addMemory, editMemory, removeMemory,
                     clearMemories, exportMemories, setMemoryChatConsent,
                     modelIdle = !ai.busy && !ai.generating, ai = ai,
                     requestSummary = requestMemorySummary, dismissSummary = dismissMemorySummary,
