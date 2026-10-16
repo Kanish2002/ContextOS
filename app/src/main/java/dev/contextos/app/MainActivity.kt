@@ -117,10 +117,20 @@ class MainActivity : ComponentActivity() {
                     },
                     saveSnapshot = contextModel::saveSnapshot,
                     clearHistory = contextModel::clearHistory,
-                    addMemory = memoryModel::add, removeMemory = memoryModel::remove,
-                    clearMemories = memoryModel::clearAll,
+                    addMemory = memoryModel::add,
+                    removeMemory = { id ->
+                        memoryModel.remove(id)
+                        if (memories.includeInChat) assistant.newChat()
+                    },
+                    clearMemories = {
+                        memoryModel.clearAll()
+                        if (memories.includeInChat) assistant.newChat()
+                    },
                     exportMemories = { memoryExporter.launch("ContextOS-private-memories.txt") },
-                    setMemoryChatConsent = memoryModel::updateChatConsent
+                    setMemoryChatConsent = { enabled ->
+                        memoryModel.updateChatConsent(enabled)
+                        if (!enabled) assistant.newChat()
+                    }
                 )
             }
         }
@@ -200,7 +210,8 @@ private fun ContextApp(
                 Destination.CONTEXT -> ContextPage(context, toggleSensors, requestSteps, activityAllowed,
                     requestLocation, usageAllowed, requestUsage, saveSnapshot, clearHistory)
                 Destination.MEMORY -> MemoryPage(memory, addMemory, removeMemory,
-                    clearMemories, exportMemories, setMemoryChatConsent)
+                    clearMemories, exportMemories, setMemoryChatConsent,
+                    modelIdle = !ai.busy && !ai.generating)
                 Destination.SETTINGS -> SettingsPage(appearance, ai, importModel, loadModel, selectBackend, clearHistory)
             }
         }
