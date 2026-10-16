@@ -42,6 +42,9 @@ fun InsightSettingsCard(settings: InsightPreferences, updateNotifications: (Bool
             Text("Daily notification limit · " + settings.dailyLimit, style = MaterialTheme.typography.titleSmall)
             Slider(value = settings.dailyLimit.toFloat(), onValueChange = { settings.dailyLimit = it.toInt() },
                 valueRange = 0f..3f, steps = 2)
+            OutlinedButton(onClick = settings::resetFeedback) {
+                Text("Reset suggestion feedback")
+            }
             Text("Also enforces a six-hour cooldown. Android controls actual delivery times; quiet-hour notifications are skipped, not deferred. Equal start/end means all-day quiet.",
                 style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant)
         }
