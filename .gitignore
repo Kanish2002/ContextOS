@@ -1,4 +1,14 @@
 .gradle/
+.idea/
 build/
+*/build/
+local.properties
+*.iml
 *.apk
+*.aab
 *.litertlm
+*.part
+.DS_Store
+
+# Bundled AI weights must be downloaded during build, never committed
+app/src/main/assets/models/*.litertlm
