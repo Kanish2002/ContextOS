@@ -476,7 +476,7 @@ private fun IntegrationsScreen(
             "Import only selected items via Android document/photo pickers. Photo text recognition is on-device.") {
             OutlinedButton(onClick = chooseDocuments) { Text("Import document or Timeline export") }
             OutlinedButton(onClick = choosePhoto) { Text("Choose photo and recognize text") }
-            Text("Supports PDF text, TXT, Markdown, CSV, JSON, HTML and calendar text. Scanned PDFs without a text layer require photo OCR. Timeline JSON parsing supports several known export layouts.",
+            Text("Supports PDF text, TXT, Markdown, CSV, JSON, HTML and calendar text. For scanned PDFs with no text layer, the first five pages are OCRed locally within a memory limit. WhatsApp .txt exports and known Timeline JSON layouts are supported.",
                 style = MaterialTheme.typography.bodySmall)
         }
 
