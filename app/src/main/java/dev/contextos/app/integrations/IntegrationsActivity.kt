@@ -14,6 +14,8 @@ import androidx.activity.result.IntentSenderRequest
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
+import androidx.core.view.WindowCompat
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -85,6 +87,7 @@ class IntegrationsActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         val theme = AppearanceSettings(applicationContext)
         deadlineAlerts = getSharedPreferences("contextos_knowledge_choices", MODE_PRIVATE)
             .getBoolean("agent_reminders", false)
@@ -261,7 +264,8 @@ private fun IntegrationsScreen(
         confirmButton = { TextButton(onClick = { clear(); confirmDelete = false }) { Text("Erase") } },
         dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } })
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()
+        .verticalScroll(rememberScrollState())
         .padding(horizontal = 16.dp, vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
         Text("ContextOS · Integrations & Agent", style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold)
@@ -311,7 +315,8 @@ private fun IntegrationsScreen(
             OutlinedTextField(value = detail, onValueChange = { detail = it.take(16000) },
                 label = { Text("Details or dictated note") }, modifier = Modifier.fillMaxWidth(),
                 minLines = 2)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf("NOTE","PROJECT","CAREER","LEARNING").forEach { tag ->
                     FilterChip(selected = tag == category, onClick = { category = tag },
                         label = { Text(tag.lowercase().replaceFirstChar { it.uppercase() }) })
