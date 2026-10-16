@@ -101,7 +101,8 @@ class IntegrationsActivity : ComponentActivity() {
                     state = state, notice = notice, googlePreview = googlePreview,
                     calendarPreview = calendarPreview, healthSummary = healthSummary,
                     voiceText = recognizedVoice, cloudResult = cloudResult,
-                    search = library::updateSearch, save = library::add, remove = library::delete,
+                    search = library::updateSearch, semanticSearch = library::semanticSearch,
+                    save = library::add, remove = library::delete,
                     done = library::toggleDone, clear = library::clearAll,
                     savePreview = library::savePreview, clearMessage = library::clearMessage,
                     shareChat = library::updateChatConsent, setAgent = { enabled ->
@@ -311,6 +312,7 @@ private fun IntegrationsScreen(
     state: KnowledgeState, notice: String, googlePreview: List<KnowledgeEntry>,
     calendarPreview: List<KnowledgeEntry>, healthSummary: String, voiceText: String,
     cloudResult: String, search: (String) -> Unit,
+    semanticSearch: () -> Unit,
     save: (String, String, String, String?) -> Unit,
     remove: (String) -> Unit, done: (String) -> Unit, clear: () -> Unit,
     savePreview: (KnowledgeEntry) -> Unit, clearMessage: () -> Unit,
@@ -381,6 +383,15 @@ private fun IntegrationsScreen(
             OutlinedTextField(value = state.query, onValueChange = search,
                 label = { Text("Search offline knowledge") }, modifier = Modifier.fillMaxWidth(),
                 placeholder = { Text("Which projects haven't I completed?") }, singleLine = true)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = semanticSearch,
+                    enabled = state.query.isNotBlank() && !state.searchingSemantic) {
+                    Text(if (state.semanticAvailable) "Search by meaning (offline)" else "Search keywords")
+                }
+                if (state.searchingSemantic) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+            }
+            if (!state.semanticAvailable) Text("For semantic document retrieval, import a compatible .tflite Text Embedder in the Memory tab. Keyword search works without it.",
+                style = MaterialTheme.typography.bodySmall)
             val shown = if (state.query.isBlank()) state.entries.takeLast(8).asReversed() else state.results
             shown.take(12).forEach { entry ->
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
