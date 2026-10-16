@@ -96,10 +96,21 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
         val record = KnowledgeEntry(title = title.trim().take(160),
             body = body.trim().take(KnowledgeSearch.MAX_TEXT),
             source = "Written by user", category = category, dueAt = due)
-        viewModelScope.launch(Dispatchers.IO) { append(listOf(record), "Saved with encryption.") }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { append(listOf(record), "Saved with encryption.") }
+                .onFailure { error -> _state.update {
+                    it.copy(message = "Could not save: " + (error.message ?: "Unknown error").take(160))
+                } }
+        }
     }
     fun savePreview(entry: KnowledgeEntry) {
-        viewModelScope.launch(Dispatchers.IO) { append(listOf(entry), "Saved selected item.") }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { append(listOf(entry), "Saved selected item.") }
+                .onFailure { error -> _state.update {
+                    it.copy(message = "Could not save selection: " +
+                        (error.message ?: "Unknown error").take(160))
+                } }
+        }
     }
     fun toggleDone(id: String) {
         viewModelScope.launch(Dispatchers.IO) {
