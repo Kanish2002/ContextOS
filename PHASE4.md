@@ -17,7 +17,7 @@ consent-gated **local keyword retrieval** into LiteRT-LM prompts.
   tokens), returning up to three relevant items in a bounded 850-character snippet.
   Unrelated queries retrieve no notes. No conversation auto-memory or continuous
   collection.
-- Notes passed to the model are identified as user-authored reference data, not
+- Turning OFF chat memory and deleting used memories resets the active AI conversation.\n  Destructive actions are disabled while model inference is busy.\n- Notes passed to the model are identified as user-authored reference data, not
   executable instructions. The visible chat bubble retains only the typed prompt.
 - Unit tests cover relevance, no-match privacy, bounds, duplicates, normalization,
   and Tamil matching.
