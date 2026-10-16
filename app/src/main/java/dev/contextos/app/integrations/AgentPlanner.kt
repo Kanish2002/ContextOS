@@ -15,7 +15,7 @@ object AgentPlanner {
         unfinished.filter { it.dueAt != null }.forEach { task ->
             val due = Instant.ofEpochMilli(task.dueAt!!).atZone(ZoneId.systemDefault()).toLocalDate()
             val remaining = ChronoUnit.DAYS.between(now, due)
-            if (remaining in -7..3) {
+            if (remaining in -7L..3L) {
                 suggestions += AgentSuggestion(
                     "Review " + task.title.take(65),
                     "User-saved " + task.category.lowercase() + " deadline: " + due +
