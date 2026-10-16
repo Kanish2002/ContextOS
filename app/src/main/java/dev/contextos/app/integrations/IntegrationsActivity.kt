@@ -120,6 +120,12 @@ class IntegrationsActivity : ComponentActivity() {
                         google.authorize(scope, { launch -> googleResolution.launch(launch) },
                             { message -> notice = message }, { loadGooglePreview() }) },
                     disconnectGoogle = { google.disconnect(); googlePreview = emptyList() },
+                    revokeGoogle = {
+                        google.revokeAll({ notice = it }) {
+                            googlePreview = emptyList()
+                            library.deleteGoogleImports()
+                        }
+                    },
                     fetchSelectedGoogle = { item ->
                         lifecycleScope.launch {
                             notice = "Reading selected Google content..."
@@ -320,6 +326,7 @@ private fun IntegrationsScreen(
     chooseDocuments: () -> Unit, choosePhoto: () -> Unit,
     calendar: () -> Unit, health: () -> Unit, notifications: () -> Unit,
     google: (GoogleScope) -> Unit, disconnectGoogle: () -> Unit,
+    revokeGoogle: () -> Unit,
     fetchSelectedGoogle: (KnowledgeEntry) -> Unit,
     agentReminders: Boolean, toggleReminders: (Boolean) -> Unit,
     voice: () -> Unit, askOffline: (String) -> Unit,
@@ -345,6 +352,7 @@ private fun IntegrationsScreen(
     var cloudPrompt by remember { mutableStateOf("") }
     var confirmCloud by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var confirmGoogleRevoke by remember { mutableStateOf(false) }
     val app = androidx.compose.ui.platform.LocalContext.current
     val capture = remember { app.getSharedPreferences("contextos_notification_capture", android.content.Context.MODE_PRIVATE) }
     LaunchedEffect(Unit) {
@@ -358,6 +366,16 @@ private fun IntegrationsScreen(
         confirmButton = { TextButton(onClick = { confirmCloud = false
             remote(endpoint, apiKey, model, cloudPrompt) }) { Text("Send once") } },
         dismissButton = { TextButton(onClick = { confirmCloud = false }) { Text("Cancel") } })
+    if (confirmGoogleRevoke) AlertDialog(
+        onDismissRequest = { confirmGoogleRevoke = false },
+        title = { Text("Revoke Google account access?") },
+        text = { Text("Google may revoke all ContextOS scopes for the authorized account. Saved Google-sourced previews and imported Gmail/Drive text will also be erased locally. Other user-selected files are not affected.") },
+        confirmButton = { TextButton(onClick = {
+            confirmGoogleRevoke = false
+            revokeGoogle()
+        }) { Text("Revoke and erase") } },
+        dismissButton = { TextButton(onClick = { confirmGoogleRevoke = false }) { Text("Cancel") } }
+    )
     if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false },
         title = { Text("Erase encrypted knowledge?") },
         text = { Text("All manually saved documents, plans and Timeline entries will be deleted.") },
@@ -458,7 +476,10 @@ private fun IntegrationsScreen(
             GoogleScope.entries.forEach { scope ->
                 OutlinedButton(onClick = { google(scope) }) { Text("Authorize " + scope.name.lowercase()) }
             }
-            TextButton(onClick = disconnectGoogle) { Text("Forget temporary Google access token") }
+            TextButton(onClick = disconnectGoogle) { Text("Forget temporary token (this session)") }
+            OutlinedButton(onClick = { confirmGoogleRevoke = true }) {
+                Text("Revoke Google authorization")
+            }
             googlePreview.take(20).forEach { entry ->
                 Text(entry.title, fontWeight = FontWeight.Medium)
                 Text(entry.body.take(220), style = MaterialTheme.typography.bodySmall)
