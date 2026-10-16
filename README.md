@@ -1,106 +1,60 @@
-# ContextOS — Phase 1 · On-device AI for Android
+# ContextOS — Offline-first personal AI for Android
 
-**Build:** Pushes to `main` build and test a model-free debug APK through GitHub Actions. On-device inference still requires a compatible model imported by the user.
+**Version:** 0.5.0 beta (integrated Phases 1–4). **Branch:** `main`.
+The app builds without any bundled Qwen, Gemma, embedding or other AI model weights.
+Users import their own compatible model files on their Android devices.
 
-ContextOS is an offline-first Android personal AI prototype. Phase 1 is a **local model chat and benchmark harness**. Phone sensors, Google Maps, Health Connect, calendar, personal memory, and background agents are intentionally deferred to later phases. The app does not request internet, location, microphone, camera or broad storage permissions.
+## Features
 
-## What is implemented
+- **Phase 1:** Local chat powered by Google's LiteRT-LM, user-imported `.litertlm` models, streaming replies, CPU/GPU selection, and local inference benchmarks.
+- **Phase 2:** Light/dark/system appearance and Android device context, including consent-controlled foreground sensors, approximate location and on-demand usage reports. Saved snapshots are app-private SQLite (not yet encrypted).
+- **Phase 3:** Local rules-based suggestions, on-demand LiteRT-LM explanations, Helpful/Not helpful feedback, reset, optional suggestion reminders, quiet hours, daily notification limits and cooldowns.
+- **Phase 4:** AES-GCM encrypted Android Keystore personal memory vault, editable preferences/goals/facts, explicit consent for locally retrieved memory in chat, optional on-device semantic embeddings, and review/approve-before-save memory summary suggestions.
 
-- Android app in Kotlin + Jetpack Compose, dark-themed local chat UI.
-- User-initiated model file picker (`ACTION_OPEN_DOCUMENT`); streamed copy to **app-private storage** with progress, size validation, partial-file cleanup, and selected-model persistence.
-- LiteRT-LM engine with selectable CPU or GPU backends, lifecycle cleanup, reusable multi-turn conversation, streamed generation, and "New chat" reset.
-- Displayed model load time, time to first streamed text, total response time and **character** throughput (no pretending to have exact token counts).
-- Offline privacy boundary: no INTERNET permission; no uploads, model APIs, background monitoring, sensors or cloud accounts.
-- Kotlin unit tests and stand-alone smoke test; GitHub Actions debug build workflow.
+**Privacy:** No INTERNET permission and no model or user data uploads from the app. Sensor access is foreground and consent controlled. Notifications do not read sensors or run AI in the background. Plaintext memory exports are explicitly warned about before saving. Device-only usage, memory safety and model performance require physical-device validation.
 
-## Requirements
+## Build — main branch only
 
-- Android Studio with JDK 17, Android SDK Platform 35, and Gradle 8.14.3.
-- Android 8.0+ (API 26); an arm64 real phone is recommended.
-- A supported `.litertlm` model; ~1–3 GB free RAM may be needed depending on the model and backend, plus model file storage.
-- Internet is needed **outside the app** to fetch build dependencies and download a model file beforehand.
+The **only** GitHub Actions workflow is [`.github/workflows/android.yml`](.github/workflows/android.yml).
+It triggers **only on commits pushed to `main`**. Feature-branch pushes, pull requests, and manual workflow dispatches do not build APKs.
 
-## Get a model
+The workflow:
+1. Verifies there are no model weights in app asset sources.
+2. Runs `gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug`.
+3. Inspects `app-debug.apk` to verify that it contains no packaged model weights.
+4. Uploads the **ContextOS-Debug-APK-main** build artifact for download.
 
-Open [LiteRT Community Gemma 3 1B IT](https://huggingface.co/litert-community/Gemma3-1B-IT/tree/main), sign in and accept its Gemma license. Download `gemma3-1b-it-int4.litertlm` (approximately 584 MB, subject to host changes) or another compatible `.litertlm`. **Do not use `.task` or `.tflite` variants.** Copy the downloaded file into a location Android's file picker can access, such as Downloads.
+No workflow downloads Qwen, makes a second bundled APK or triggers on completion of another build. Historic GitHub Actions runs may remain in the Actions history.
 
-The model is **not bundled** because of its size and license. Some LiteRT-LM model builds target particular accelerators; start with CPU and switch to GPU only if the selected build and device support it.
+## Install and load your own local model
 
-## Run
+1. Download the latest main build from [GitHub Actions](https://github.com/Kanish2002/ContextOS/actions/workflows/android.yml), then extract `app-debug.apk` from the artifact ZIP.
+2. Install the APK on an Android device. **Debug signatures from different builders may prevent installing over an existing debug APK**; back up anything important before reinstalling.
+3. Separately obtain a compatible LiteRT-LM `.litertlm` model and place it in your phone's Downloads or another location accessible to the Android system file picker.
+4. In ContextOS, use **Settings → On-device model → Import**, choose the `.litertlm`, then tap **Load model**. Start with CPU and only switch to GPU if your device and model support it.
+5. For Phase 4 semantic recall, optionally import a metadata-bearing MediaPipe Text Embedder `.tflite` using **Memory → Import Text Embedder**. This is a different model from the chat `.litertlm`. The app falls back to local keyword recall without one.
 
-1. Unzip the project and open its **root folder** in Android Studio.
-2. Sync Gradle. If the IDE requires a Gradle wrapper, run `gradle wrapper --gradle-version 8.14.3` using a local Gradle installation. A wrapper binary is not included in this source archive.
-3. Connect an ARM64 Android phone with USB debugging enabled.
-4. Select the `app` run configuration and install the debug build.
-5. In ContextOS, tap **Import**, select the downloaded `.litertlm` file, and wait for copying to finish.
-6. Keep **CPU** selected initially and tap **Load model**. Once the status reads "Model ready", start chatting.
-7. Try a few prompts and record latency and temperature on your device. Use **New chat** to reset model conversation context.
+**Model files are not part of the APK.** Expect adequate free disk space and device RAM for your chosen model. Actual memory use and local response latency depend on model/device.
 
-CLI build (with configured Android SDK + Gradle):
+## Local development
+
+Requirements: JDK 17, Android SDK Platform 35 and Gradle 8.14.3.
 
 ```bash
 gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
+python3 scripts/verify_model_free_apk.py app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Output: `app/build/outputs/apk/debug/app-debug.apk`.
+The APK is at `app/build/outputs/apk/debug/app-debug.apk`.
 
-## Current limitations / things to verify on a phone
+## Detailed phase documentation
 
-- No Android SDK, Gradle distribution, model weights, or Android device were available in the authoring environment, so a full APK build and live inference were **not** performed here. CI is defined but not yet run.
-- `litertlm-android:latest.release` follows Google's current documentation; pin the exact resolved version after the first successful build to ensure reproducibility.
-- Model CPU/GPU backend compatibility varies by file and chipset. Unsupported GPU may fail to load, in which case switch to CPU; there is no silent fallback.
-- Backgrounding during inference and low-memory process termination need device-level testing. The session is in memory and cleared when the process exits; the imported model survives.
-- Benchmark metrics are client-side wall times and approximate character throughput, not model-reported token metrics or scientific benchmarking. First streamed chunk includes prompt processing.
-- UI is an initial working design; accessibility, tablet landscape, session export, persisted chat, and hard performance safeguards remain future work.
+- [Phase 2](PHASE2.md)
+- [Phase 3 initial scope](PHASE3.md) and [Phase 3 added features](PHASE3-COMPLETION.md)
+- [Phase 4 initial scope](PHASE4.md) and [Phase 4 added features](PHASE4-COMPLETION.md)
 
-## Project layout
+These source-level features are not a production certification. Physical-device verification is still needed for inference, semantic accuracy, notifications, keyboard behavior and app-data upgrades.
 
-```text
-app/src/main/java/dev/contextos/app/
-  MainActivity.kt                 # Compose screens + model selection
-  AssistantViewModel.kt          # State, import, load, chat, metrics
-  inference/LocalInferenceEngine.kt  # Native LiteRT-LM engine & conversation
-  data/ModelStore.kt            # App-private model import
-  model/ChatModels.kt           # UI and performance state
-  model/StreamAccumulator.kt    # Streaming fragments
-app/src/test/.../StreamAccumulatorTest.kt
-scripts/smoke_test.sh
-.github/workflows/android.yml
-```
+## Licenses
 
-## Privacy and design decisions
-
-Device input is **explicitly selected** by the user. A local file import is copied into private app storage. No personal data is collected in Phase 1. There are no network permissions or analytics SDKs. Later versions should implement separate opt-in permission controls, encrypted local memory, deletion/export controls, and a minimum-data policy.
-
-## Next milestone
-
-Once the device runs model load and generation reliably: add activity context (walking/stationary), permissions UI, and local event summaries. Do **not** send raw accelerometer samples directly to the language model.
-
-## Authoritative references
-
-- [LiteRT-LM Android Kotlin SDK](https://developers.google.com/edge/litert-lm/android)
-- [LiteRT-LM source](https://github.com/google-ai-edge/LiteRT-LM)
-- [Official mobile examples](https://github.com/google-ai-edge/litert-samples)
-- [Gemma 3 1B model variants](https://huggingface.co/litert-community/Gemma3-1B-IT)
-
-## Licensing
-
-This starter's original code may be used as a foundation for your app. Third-party dependencies and Google Gemma model weights retain their own licenses and terms; the downloaded model isn't redistributed here.
-
-
-## GitHub Actions: APK only, on main pushes
-
-The only build workflow is [`.github/workflows/android.yml`](.github/workflows/android.yml).
-It runs **only when a commit is pushed to `main`**, not for pull requests,
-feature-branch pushes, or manual runs. It runs unit tests, builds
-`app-debug.apk`, verifies that it does not contain AI model weights,
-and publishes the `ContextOS-Debug-APK-main` artifact for installation.
-
-**No Qwen/Gemma model is downloaded or bundled.** Download a compatible
-`.litertlm` file yourself, transfer it to your phone, open ContextOS,
-tap **Import**, pick the file, and tap **Load model**. Model files remain
-private on your device. The app has no INTERNET permission.
-
-For a local build: `gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug`.
-The old Qwen-bundled workflow was removed. Historic GitHub Actions runs may
-remain visible in Actions history but cannot start a new Qwen model build.
+Third-party components, model weights downloaded by the user and runtime dependencies have their own licenses. ContextOS does not redistribute AI model weights.
