@@ -107,6 +107,12 @@ class ImportPipeline(private val context: Context) {
             }
         }.trim()
         require(text.isNotBlank()) { "No extractable text found. Scanned PDFs may require OCR." }
+        if (ext == "txt" && (
+                text.contains("] ") || text.lineSequence().take(10).any { it.contains(" - ") }
+            )) {
+            val conversation = WhatsAppExportParser.parse(text)
+            if (conversation.isNotEmpty()) return@withContext conversation
+        }
         if (ext == "json" && (text.contains("timelineObjects") || text.contains("semanticSegments"))) {
             val trips = runCatching { TimelineParser.parse(text) }.getOrDefault(emptyList())
             if (trips.isNotEmpty()) return@withContext trips
