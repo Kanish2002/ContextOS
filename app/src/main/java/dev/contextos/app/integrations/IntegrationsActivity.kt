@@ -487,6 +487,14 @@ private fun IntegrationsScreen(
                 TextButton(onClick = { savePreview(entry) }, enabled = !state.busy) {
                     Text("Save this preview locally")
                 }
+                if (!entry.location.isNullOrBlank() && entry.dueAt != null) {
+                    TextButton(onClick = {
+                        destination = entry.location.orEmpty()
+                        arrival = java.time.LocalDateTime.ofInstant(
+                            java.time.Instant.ofEpochMilli(entry.dueAt!!),
+                            java.time.ZoneId.systemDefault()).toString().take(16)
+                    }) { Text("Use event for commute planning") }
+                }
                 if (entry.source == "Selected Gmail preview" ||
                     entry.source == "Selected Google Drive metadata") {
                     TextButton(onClick = { fetchSelectedGoogle(entry) },
@@ -506,6 +514,14 @@ private fun IntegrationsScreen(
                 Text(entry.title, fontWeight = FontWeight.Medium)
                 Text(entry.body.take(200), style = MaterialTheme.typography.bodySmall)
                 TextButton(onClick = { savePreview(entry) }) { Text("Save event") }
+                if (!entry.location.isNullOrBlank() && entry.dueAt != null) {
+                    TextButton(onClick = {
+                        destination = entry.location.orEmpty()
+                        arrival = java.time.LocalDateTime.ofInstant(
+                            java.time.Instant.ofEpochMilli(entry.dueAt!!),
+                            java.time.ZoneId.systemDefault()).toString().take(16)
+                    }) { Text("Plan travel to this event") }
+                }
             }
             OutlinedButton(onClick = health) { Text("Authorize Health Connect steps") }
             if (healthSummary.isNotBlank()) Text(healthSummary)
