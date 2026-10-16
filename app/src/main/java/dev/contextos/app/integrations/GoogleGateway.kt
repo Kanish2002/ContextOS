@@ -152,7 +152,7 @@ class GoogleGateway(private val activity: Activity) {
                     KnowledgeEntry(title = e.optString("summary", "Calendar event").take(150),
                         body = "Scheduled " + start + ". " + e.optString("description", "").take(1000),
                         source = "Selected Google Calendar event", category = "CAREER",
-                        dueAt = dueAt)
+                        dueAt = dueAt, location = e.optString("location").take(200))
                 }
             }
         }
