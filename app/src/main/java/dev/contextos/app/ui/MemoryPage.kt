@@ -1,6 +1,7 @@
 package dev.contextos.app.ui
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -17,6 +18,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.contextos.app.memory.MemoryPolicy
+import dev.contextos.app.memory.MemoryKind
+import dev.contextos.app.model.AssistantState
 import dev.contextos.app.memory.MemoryState
 import java.text.DateFormat
 import java.util.Date
@@ -24,15 +27,41 @@ import java.util.Date
 @Composable
 fun MemoryPage(
     state: MemoryState,
-    add: (String) -> Unit,
+    add: (String, MemoryKind) -> Unit,
     delete: (String) -> Unit,
     clearAll: () -> Unit,
     export: () -> Unit,
     setChatConsent: (Boolean) -> Unit,
-    modelIdle: Boolean
+    modelIdle: Boolean, ai: AssistantState,
+    requestSummary: () -> Unit, dismissSummary: () -> Unit,
+    importEmbedding: () -> Unit
 ) {
     val color = MaterialTheme.colorScheme
     var draft by rememberSaveable { mutableStateOf("") }
+    var kind by rememberSaveable { mutableStateOf(MemoryKind.PREFERENCE.name) }
+    var summaryDraft by rememberSaveable { mutableStateOf("") }
+    LaunchedEffect(ai.memorySuggestion) {
+        ai.memorySuggestion?.let { summaryDraft = it }
+    }
+    if (ai.memorySuggestion != null) AlertDialog(
+        onDismissRequest = dismissSummary,
+        title = { Text("Review proposed memory") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Text("Generated offline from your recent chat. Edit before saving. Nothing was saved automatically.")
+                OutlinedTextField(value = summaryDraft,
+                    onValueChange = { summaryDraft = it.take(MemoryPolicy.MAX_NOTE_LENGTH) },
+                    label = { Text("Long-term preference or fact") }, minLines = 3)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { add(summaryDraft, MemoryKind.PREFERENCE); dismissSummary() },
+                enabled = summaryDraft.isNotBlank() && state.notes.size < MemoryPolicy.MAX_NOTES) {
+                Text("Save encrypted memory")
+            }
+        },
+        dismissButton = { TextButton(onClick = dismissSummary) { Text("Discard") } }
+    )
     var confirmClear by remember { mutableStateOf(false) }
     var confirmExport by remember { mutableStateOf(false) }
 
@@ -83,12 +112,22 @@ fun MemoryPage(
                     minLines = 3, maxLines = 6,
                     shape = RoundedCornerShape(17.dp)
                 )
+                Text("Save as", style = MaterialTheme.typography.labelMedium)
+                Row(Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    MemoryKind.entries.forEach { candidate ->
+                        FilterChip(selected = kind == candidate.name,
+                            onClick = { kind = candidate.name }, label = {
+                                Text(candidate.name.lowercase().replaceFirstChar { it.uppercase() })
+                            })
+                    }
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(draft.length.toString() + " / " + MemoryPolicy.MAX_NOTE_LENGTH,
                         color = color.onSurfaceVariant, style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.weight(1f))
                     Button(
-                        onClick = { add(draft); draft = "" },
+                        onClick = { add(draft, MemoryKind.valueOf(kind)); draft = "" },
                         enabled = draft.isNotBlank() && !state.loading && !state.busy &&
                             state.error == null && state.notes.size < MemoryPolicy.MAX_NOTES
                     ) {
@@ -118,6 +157,24 @@ fun MemoryPage(
             Text(it, style = MaterialTheme.typography.bodySmall, color = color.error)
         }
         Text(state.status, style = MaterialTheme.typography.labelSmall, color = color.onSurfaceVariant)
+        Surface(color = color.surfaceContainerLow, shape = RoundedCornerShape(20.dp)) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("AI memory and semantic search", fontWeight = FontWeight.SemiBold)
+                Text(state.embeddingStatus, color = color.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall)
+                OutlinedButton(onClick = importEmbedding, enabled = !state.busy) {
+                    Text(if (state.embeddingReady) "Replace embedding model" else "Import Text Embedder .tflite")
+                }
+                Text("Embedding model is optional; otherwise retrieval falls back to local keywords.",
+                    color = color.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                Button(onClick = requestSummary,
+                    enabled = modelIdle && ai.initialized && ai.messages.isNotEmpty() && !state.busy) {
+                    Text("Suggest memory from recent chat")
+                }
+                Text("On-device LLM creates a draft; you must approve before it is saved.",
+                    color = color.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+            }
+        }
 
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("Saved memories (" + state.notes.size + ")", modifier = Modifier.weight(1f),
@@ -143,6 +200,8 @@ fun MemoryPage(
                     Row(Modifier.fillMaxWidth().padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 5.dp),
                         verticalAlignment = Alignment.Top) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(note.kind.name.lowercase().replaceFirstChar { it.uppercase() },
+                                style = MaterialTheme.typography.labelSmall, color = color.primary)
                             Text(note.text, style = MaterialTheme.typography.bodyMedium)
                             Text(DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
                                 .format(Date(note.createdAtMs)),
@@ -156,7 +215,7 @@ fun MemoryPage(
             }
         }
 
-        Text("Encryption: Android Keystore AES-GCM. This first Phase 4 release uses local keyword retrieval; a separate embedding model is not yet included.",
+        Text("Encryption: Android Keystore AES-GCM. Semantic embeddings are available after importing a supported model; no network is required.",
             style = MaterialTheme.typography.bodySmall, color = color.onSurfaceVariant)
         Spacer(Modifier.height(16.dp))
     }
