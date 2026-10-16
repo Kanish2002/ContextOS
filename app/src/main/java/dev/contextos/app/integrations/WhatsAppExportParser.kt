@@ -45,7 +45,7 @@ object WhatsAppExportParser {
             }
         }
         if (recognized < 2) return emptyList()
-        return day.entries.takeLast(40).map { (date, builder) ->
+        return day.entries.toList().takeLast(40).map { (date, builder) ->
             KnowledgeEntry(
                 title = "Imported chat · $date",
                 body = builder.toString().take(KnowledgeSearch.MAX_TEXT),
