@@ -1,56 +1,83 @@
-# ContextOS feature/phase5-6-all-integrations — PR readiness
+# ContextOS v0.6 — Merge readiness (Phases 5 and 6 + every requested idea)
 
-**NOT READY FOR A MERGE-READY PR.** The user specifically requested a pull request
-only after every proposed feature has been completed and validated.
+**Decision: NOT MERGE-READY. Do not create a PR until full acceptance is met.**
 
-## Source implementation status (not equivalent to device-verified behavior)
+All feature development occurs on `feature/phase5-6-all-integrations`.
+The only GitHub Actions workflow remains push-to-`main` only, model-free.
+Do not change the workflow to run for feature branches or pull requests.
 
-| Requested idea | Currently working in source | To mark fully complete |
+## Feature implementation inventory
+
+| Requirement | Current source | Remaining acceptance criteria |
 |---|---|---|
-| Selected documents/files | Android SAF + bounded local import, encrypted archive | Test providers, malformed and large PDFs, text encoding, file quota |
-| Photos/multimodal | Photo Picker, local ML Kit OCR and generic labels | Test on devices, multi-script OCR, semantics/false positives |
-| Private offline search & RAG | Categorized encrypted knowledge store, lexical temporal questions and bounded chat retrieval | Embedding retrieval for imported documents, evaluation of accuracy and source citations |
-| Gmail | Google OAuth per-source permission, user-triggered message previews and selected full message imports | Configured OAuth signing/consent, Gmail restricted-scope review/verification, account disconnect/revocation, real-device test |
-| Drive | OAuth, metadata preview, selected text document export/import | OAuth configuration, authorization verification, richer Drive file coverage and identity/revocation |
-| Calendar | Android calendar permission, Google Calendar previews with start times | End-to-end event permission/API tests, precise timezones, proactive integration validation |
-| Health Connect | Opt-in read steps and on-demand seven-day total | Provider availability / API tests on Android versions, privacy approval |
-| Notification access | NotificationListenerService records allowlisted app COUNTS only | Permission granting/revocation test, service stop/boot behavior, duplicates/rate limits |
-| Timeline | User-exported JSON parser for two known layouts | Test with real user export variants and location data minimization |
-| WhatsApp | Chat export as text via SAF; optional notification counts only | Test import consent and supported export format; private app DB is **not accessible** |
-| Commute | Imported historical median + user-triggered Google Routes traffic-aware estimate with manual API key, arrival buffer | Configure Routes API billing/key and test live traffic, calendar-linked per-route recommendations |
-| Career/learning | Encrypted goals, saved user-approved mail/calendar items, deadlines and completion flags | Verified extraction of commitments, learning plan and personalized preparation |
-| Proactive agent | Local ranked deadline reminders, privacy opt-in, quiet hours and daily caps | Live device notification QA; feedback adaptation to user schedule beyond fixed rules |
-| Adaptive ranking | Helpful/Not helpful weighting for rule-based insights | Evaluate ranking and cross-module contextual feedback, persistence tests |
-| Offline voice | Android 12+ on-device recognizer; RECORD_AUDIO prompt, no cloud recognizer fallback | Device microphone and language support tests, offline ASR availability |
-| Optional cloud fallback | Confirmed per-request HTTPS calls, user-held ephemeral key, no automatic transmissions | Provider compatibility, cancellation and full request/response UI tests |
-| Phase 5/6 | Integrated source entry screens and feature flags | All items above validated |
+| Gmail | OAuth request, previews, explicit selected full-message text import | Real Google account OAuth, proper app registration/verification, security/privacy and revocation QA |
+| Google Drive | OAuth preview, selected plain text/Google Docs and CSV export import | Real account QA; additional file formats and OAuth scopes reviewed |
+| Google Calendar + Android Calendar | Upcoming event previews with destination/date; optional individually saved | Real API/provider tests, access revocation and timezone QA |
+| Health Connect | Consent-gated seven-day steps aggregation | Device permissions/provider tests and app-policy declaration for distribution |
+| NotificationListenerService | Opt-in allowlisted package *counts only*, no bodies | Settings enable/disable and OEM/battery saver tests |
+| Selected photos/documents | Android pickers, offline OCR/labels, PDF text and 5-page bounded scanned-PDF OCR | Physical-device RAM/latency tests, malformed/large files, accessibility |
+| Timeline history | Opt-in import of known export JSON variants; historical trip median | Validate with real Timeline exports and changed schemas |
+| WhatsApp | User-exported .txt conversation parsing grouped by date, local encryption | Locale/date-format test matrix and export QA; private app storage remains inaccessible |
+| Offline searchable archive/RAG | AES-GCM encrypted 160-entry knowledge vault, temporal queries, optional semantic retrieval via imported .tflite, consent-gated chat excerpts | Device semantic relevance benchmarks, sources/accuracy testing, no-cross-leak verification |
+| Smart commute | Historical median; Google Routes traffic-aware live estimate, delay warning, event destinations, suggested leave-by time | Real Routes API with billed/project-restricted key, calendar scenarios, proactive traffic recheck decisions |
+| Career and learning companion | Encrypted projects/deadlines, completion tracking, saved selected email/calendar entries, topic-specific practice suggestions | Personalized study-plan progression, real sourced inbox/calendar QA |
+| Proactive personal agent | WorkManager deadline reminders, foreground suggestions, per-item ratings, quiet hours, daily caps and feedback suppression | Test doze, notification permissions, user approvals, scheduling reliability |
+| Adaptive ranking | Persisted Helpful/Not useful feedback ranks agent suggestions and suppresses dismissed reminders | Longer-term adaptation evaluation, bias/error safeguards |
+| Multimodal perception | User-selected image OCR + generic offline image labels | Model/device evaluation, no unsupported claims about vision understanding |
+| Offline voice | Android 12+ on-device SpeechRecognizer with runtime mic consent; offline-only read-aloud TTS | Devices/languages with offline recognizer and offline installed voice packs |
+| Optional cloud fallback | Confirmed one-shot HTTPS chat completion with per-request typed key | Provider interoperability, error/cancellation/security QA; not automatic |
 
-## Hard prerequisites
+**No background reading of Gmail, Drive, WhatsApp message bodies or Health Connect.**
+No bypass of Android app sandbox or OAuth scope approval.
 
-- Google Cloud API project configured with an Android OAuth client for
-  package dev.contextos.app and the correct SHA-1 of the signing certificate.
-  Gmail/Drive restricted scopes can require Google's verification/security review.
-  Users must explicitly authorize each scope; developer/admin approval alone is
-  never sufficient to read another person's account.
-- Routes API activated with billing and an appropriately restricted API key.
-  Keys cannot be embedded as shared plaintext secrets in the APK.
-- Real Android phones, Google Play Services, Health Connect where supported,
-  on-device recognizer, and compatible .litertlm model for end-to-end QA.
-- Only pushes to main may trigger GitHub Actions APK builds, per the user's
-  separate instruction. Do NOT add feature-branch Actions triggers merely
-  to obtain a green badge. Feature code has NOT been compiled by CI.
-- Manual tests for permissions, deletion, Keystore corruption, backup, offline
-  operation, consent revocation, battery saver and Android 13–16.
+## Blockers preventing a merge-ready PR
 
-## Most recent source additions
+1. **Google account integration:** Android OAuth registration for
+   `dev.contextos.app` with a **stable signing certificate SHA-1**, consent screen,
+   enabled Gmail/Drive/Calendar APIs and test account. Restricted-scope verification
+   (and possibly independent assessment) is outside a code-only build.
+   The `revokeAccess` code is implemented, but needs real account QA.
+2. **Live traffic:** Google Routes API enabled with billing and an appropriately
+   restricted key. No shared API key is committed or embedded in the APK.
+3. **Physical Android testing:** Health Connect data scope approvals;
+   notification listener permission/revocation and OEM battery optimization;
+   local ASR/TTS; photo OCR and PDF memory use; encrypted vault recovery.
+4. **Compile/test verification:** No Android SDK is available in this execution
+   environment. The main-only workflow intentionally does not build this branch,
+   so *new integration code has NOT passed Android CI*. No APK should be called
+   verified or distributable from this branch.
+5. **Remaining feature depth:** User-approved periodic commute refreshes/alerts,
+   broader provider/source coverage, agent action approvals, semantic quality evaluation
+   and accessibility/performance tests for full acceptance.
+6. **Distribution:** Need an accurate privacy policy and any Google OAuth, Gmail
+   restricted-scope and Health Connect app/policy review. No permission bypass exists.
 
-- Google Routes API: live traffic-aware estimates on demand and deadline-aware
-  leave-by calculator (requires user's API key).
-- Select one Gmail or Drive preview and explicitly import readable contents.
-- Photo OCR plus ML Kit bundled on-device image labels.
-- On-device-only speech recognition when OS offers it.
-- Android API-26 compatible streaming reads with strict size bounds.
-- Tests: route computation and size limits.
+## Most recent source improvements
 
-**Decision:** Do not raise a merge-ready PR or merge into main until this
-list has no blocking item. No feature-branch GitHub Actions workflow was created.
+- Selected Gmail/Drive full text, signed-in Google account revocation, local Google
+  archive removal on successful revocation.
+- Semantic search for imported documents using the same optional on-device model
+  as personal memory, with lexical and structured-date fallback; prompt excerpt bounds.
+- Imported WhatsApp `.txt` date-grouped conversations; bounded scanned-PDF OCR.
+- Calendar-linked Google Routes departure time and traffic delay warning.
+- Feedback-weighted agent suggestions plus career preparation topics; dismissed
+  deadline alerts are suppressed in the background worker.
+- Offline-only on-device speech input and offline-voice playback control.
+- Session reset when imported data or chat consent changes.
+- Updated APK verification: Qwen/LiteRT-LM and user .tflite weights excluded, while
+  required small bundled ML Kit OCR/classifier library assets are allowed.
+- Added unit test sources for export parsing, semantic rule gating, stream bounds,
+  commute delay/leave-by calculations and feedback ranking (not yet executed in CI).
+
+### User validation checklist before merge
+
+- [ ] Configure developer-owned Google Cloud project + OAuth test user and signing.
+- [ ] Configure Routes API test billing/key.
+- [ ] Build a test APK locally without modifying main-only Actions triggers.
+- [ ] Test real Gmail, Drive and Google Calendar authorization/revocation.
+- [ ] Test representative Timeline/WhatsApp/PDF/photo samples and model-memory retrieval.
+- [ ] Test Android 13–16 permissions, notifications, voice, Health Connect, user deletion.
+- [ ] Complete benchmark, accessibility, security and error-path checks.
+- [ ] Only then create a reviewed PR to main; user performs final merge.
+
+Read `PHASE5-6-ALL-IDEAS.md` for module behavior and integration prerequisites.
