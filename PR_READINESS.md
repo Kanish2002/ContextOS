@@ -59,7 +59,8 @@ No bypass of Android app sandbox or OAuth scope approval.
 - Semantic search for imported documents using the same optional on-device model
   as personal memory, with lexical and structured-date fallback; prompt excerpt bounds.
 - Imported WhatsApp `.txt` date-grouped conversations; bounded scanned-PDF OCR.
-- Calendar-linked Google Routes departure time and traffic delay warning.
+- Calendar-linked Google Routes departure time, traffic delay warning and opt-in
+  one-shot encrypted leave-by reminders with inexact WorkManager delivery.
 - Feedback-weighted agent suggestions plus career preparation topics; dismissed
   deadline alerts are suppressed in the background worker.
 - Offline-only on-device speech input and offline-voice playback control.
