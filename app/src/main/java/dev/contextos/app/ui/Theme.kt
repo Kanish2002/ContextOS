@@ -49,7 +49,7 @@ class AppearanceSettings(context: Context) {
         prefs.edit().putBoolean("share_context_with_chat", value).apply()
     }
 
-    fun setInsightsEnabled(value: Boolean) {
+    fun updateInsightsConsent(value: Boolean) {
         insightsEnabled = value
         prefs.edit().putBoolean("insights_enabled", value).apply()
     }
