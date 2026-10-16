@@ -44,6 +44,16 @@ class IntegrationsActivity : ComponentActivity() {
     private var recognizedVoice by mutableStateOf("")
     private var healthSummary by mutableStateOf("")
     private var cloudResult by mutableStateOf("")
+    private var deadlineAlerts by mutableStateOf(false)
+    private val notifyPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        updateDeadlineAlerts(granted)
+    }
+    private fun updateDeadlineAlerts(enabled: Boolean) {
+        deadlineAlerts = enabled
+        getSharedPreferences("contextos_knowledge_choices", MODE_PRIVATE)
+            .edit().putBoolean("agent_reminders", enabled).apply()
+        AgentReminderScheduler.sync(this, enabled)
+    }
 
     private val documents = registerForActivityResult(ActivityResultContracts.OpenDocument()) {
         it?.let(library::importDocument)
@@ -76,6 +86,9 @@ class IntegrationsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val theme = AppearanceSettings(applicationContext)
+        deadlineAlerts = getSharedPreferences("contextos_knowledge_choices", MODE_PRIVATE)
+            .getBoolean("agent_reminders", false)
+        AgentReminderScheduler.sync(this, deadlineAlerts)
         setContent {
             val state by library.state.collectAsStateWithLifecycle()
             ContextOsTheme(theme) {
@@ -98,6 +111,15 @@ class IntegrationsActivity : ComponentActivity() {
                         google.authorize(scope, { launch -> googleResolution.launch(launch) },
                             { message -> notice = message }, { loadGooglePreview() }) },
                     disconnectGoogle = { google.disconnect(); googlePreview = emptyList() },
+                    agentReminders = deadlineAlerts,
+                    toggleReminders = { value ->
+                        if (!value) updateDeadlineAlerts(false)
+                        else if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                                != PackageManager.PERMISSION_GRANTED) {
+                            notifyPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        } else updateDeadlineAlerts(true)
+                    },
                     voice = ::startVoice,
                     route = ::openRoute,
                     remote = { endpoint, key, model, question ->
@@ -195,6 +217,7 @@ private fun IntegrationsScreen(
     chooseDocuments: () -> Unit, choosePhoto: () -> Unit,
     calendar: () -> Unit, health: () -> Unit, notifications: () -> Unit,
     google: (GoogleScope) -> Unit, disconnectGoogle: () -> Unit,
+    agentReminders: Boolean, toggleReminders: (Boolean) -> Unit,
     voice: () -> Unit, route: (String) -> Unit,
     remote: (String, String, String, String) -> Unit
 ) {
@@ -382,6 +405,13 @@ private fun IntegrationsScreen(
                 Text("Enable local agent suggestions", Modifier.weight(1f))
                 Switch(checked = state.agentEnabled, onCheckedChange = setAgent)
             }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Opt-in deadline notifications", Modifier.weight(1f))
+                Switch(checked = agentReminders, enabled = state.agentEnabled,
+                    onCheckedChange = toggleReminders)
+            }
+            Text("Uses saved deadlines only. Checks about twice daily; quiet hours and daily limits from Settings still apply.",
+                style = MaterialTheme.typography.bodySmall)
             if (state.agentEnabled) AgentPlanner.propose(state.entries).forEach {
                 Text(it.title, fontWeight = FontWeight.Medium)
                 Text(it.reason, style = MaterialTheme.typography.bodySmall)
