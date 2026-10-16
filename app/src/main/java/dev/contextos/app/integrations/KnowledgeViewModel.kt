@@ -144,6 +144,34 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
                 } }
         }
     }
+    fun saveCommuteReminder(destination: String, departureMs: Long) {
+        if (_state.value.busy || !_state.value.agentEnabled ||
+            !prefs.getBoolean("agent_reminders", false)) {
+            _state.update { it.copy(message = "Enable agent reminders before scheduling.") }
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                CommuteReminderScheduler.waitMillis(System.currentTimeMillis(), departureMs)
+                val entry = KnowledgeEntry(
+                    title = ("Planned commute to " + destination).take(150),
+                    body = "User-approved traffic estimate; recheck the route before departure.",
+                    source = "User-approved commute plan", category = "COMMUTE_PLAN",
+                    dueAt = departureMs, location = destination.take(200)
+                )
+                append(listOf(entry), "Leave-by plan saved with encryption.")
+                // Schedule only after the encrypted archive write succeeds.
+                CommuteReminderScheduler.schedule(getApplication(), entry.id, departureMs)
+                _state.update { it.copy(message =
+                    "Inexact leave-by reminder requested. Android may delay delivery.") }
+            } catch (failure: Exception) {
+                _state.update { it.copy(message =
+                    "Could not schedule commute reminder: " +
+                        (failure.message ?: "Unknown error").take(140)) }
+            }
+        }
+    }
+
     fun toggleDone(id: String) {
         viewModelScope.launch(Dispatchers.IO) {
             gate.withLock {
