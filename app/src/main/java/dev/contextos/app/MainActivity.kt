@@ -3,6 +3,7 @@ package dev.contextos.app
 import android.Manifest
 import android.os.Build
 import android.os.Bundle
+import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import androidx.activity.ComponentActivity
@@ -32,6 +33,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -44,6 +46,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import dev.contextos.app.memory.MemoryKind
+import dev.contextos.app.integrations.KnowledgeViewModel
+import dev.contextos.app.integrations.IntegrationsActivity
 import androidx.core.view.WindowCompat
 import dev.contextos.app.insights.InsightEngine
 import dev.contextos.app.insights.InsightInput
@@ -102,7 +106,7 @@ class MainActivity : ComponentActivity() {
             val ai by assistant.state.collectAsStateWithLifecycle()
             val context by contextModel.state.collectAsStateWithLifecycle()
             val memories by memoryModel.state.collectAsStateWithLifecycle()
-            var tab by remember { mutableStateOf(Destination.HOME) }
+            var tab by remember { mutableStateOf(if (intent.hasExtra("voice_prompt")) Destination.CHAT else Destination.HOME) }
             DisposableEffect(tab) {
                 if (tab == Destination.CONTEXT) contextModel.onVisible() else contextModel.onHidden()
                 onDispose { contextModel.onHidden() }
@@ -110,6 +114,7 @@ class MainActivity : ComponentActivity() {
             ContextOsTheme(settings) {
                 ContextApp(
                     tab = tab, navigate = { tab = it }, ai = ai, context = context,
+                    prefillChat = intent.getStringExtra("voice_prompt").orEmpty(),
                     memory = memories, appearance = settings, insightSettings = suggestionSettings,
                     requestSuggestionNotifications = { enabled ->
                         if (!enabled) {
@@ -137,7 +142,9 @@ class MainActivity : ComponentActivity() {
                     loadModel = assistant::loadModel, selectBackend = assistant::chooseBackend,
                     send = { prompt ->
                         lifecycleScope.launch {
-                            val memoriesForQuestion = memoryModel.recallForPromptAsync(prompt)
+                            val privateNotes = memoryModel.recallForPromptAsync(prompt)
+                            val knowledge = KnowledgeViewModel.recall(applicationContext, prompt)
+                            val memoriesForQuestion = listOfNotNull(privateNotes, knowledge).joinToString("\n").take(2800)
                             assistant.send(prompt,
                                 if (settings.shareContextWithChat) contextModel.currentSummary() else null,
                                 memoriesForQuestion)
@@ -191,6 +198,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun ContextApp(
     tab: Destination, navigate: (Destination) -> Unit,
+    prefillChat: String,
     ai: AssistantState, context: ContextState, memory: MemoryState, appearance: AppearanceSettings,
     insightSettings: InsightPreferences, requestSuggestionNotifications: (Boolean) -> Unit,
     explainSuggestion: (DeviceInsight) -> Unit,
@@ -241,7 +249,7 @@ private fun ContextApp(
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text("ContextOS", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("Private by design · Phases 3 + 4",
+                    Text("ContextOS · Phases 1–6",
                         style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant)
                 }
                 if (tab == Destination.CHAT) {
@@ -264,7 +272,7 @@ private fun ContextApp(
                     openMemory = { navigate(Destination.MEMORY) }, savedMemories = memory.notes.size,
                     insightSettings = insightSettings,
                     explainSuggestion = { insight -> explainSuggestion(insight); if (ai.initialized && !ai.busy && !ai.generating) navigate(Destination.CHAT) })
-                Destination.CHAT -> ChatPage(ai, send, importModel, loadModel, newChat, clearError, keyboardVisible)
+                Destination.CHAT -> ChatPage(ai, send, importModel, loadModel, newChat, clearError, keyboardVisible, prefillChat)
                 Destination.CONTEXT -> ContextPage(context, toggleSensors, requestSteps, activityAllowed,
                     requestLocation, usageAllowed, requestUsage, saveSnapshot, clearHistory)
                 Destination.MEMORY -> MemoryPage(memory, addMemory, editMemory, removeMemory,
@@ -470,10 +478,11 @@ private fun SectionTitle(title: String, hint: String? = null) {
 @Composable
 private fun ChatPage(
     state: AssistantState, send: (String) -> Unit, importModel: () -> Unit, loadModel: () -> Unit,
-    newChat: () -> Unit, clearError: () -> Unit, keyboardVisible: Boolean
+    newChat: () -> Unit, clearError: () -> Unit, keyboardVisible: Boolean,
+    prefill: String
 ) {
     val scheme = MaterialTheme.colorScheme
-    var draft by rememberSaveable { mutableStateOf("") }
+    var draft by rememberSaveable(prefill) { mutableStateOf(prefill) }
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
     val focusRequester = remember { FocusRequester() }
@@ -735,9 +744,24 @@ private fun SettingsPage(
     insightSettings: InsightPreferences, requestSuggestionNotifications: (Boolean) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
+    val settingsContext = LocalContext.current
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
         SectionTitle("Make it yours", "A calm interface with clear controls.")
+        Surface(onClick = { settingsContext.startActivity(Intent(settingsContext, IntegrationsActivity::class.java)) },
+            color = scheme.primaryContainer, shape = RoundedCornerShape(22.dp)) {
+            Row(Modifier.fillMaxWidth().padding(19.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Extension, null, tint = scheme.onPrimaryContainer)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Integrations & Personal Agent", fontWeight = FontWeight.Bold,
+                        color = scheme.onPrimaryContainer)
+                    Text("Gmail · Drive · Calendar · Health · Documents · Commute · Career · Voice",
+                        style = MaterialTheme.typography.bodySmall, color = scheme.onPrimaryContainer)
+                }
+                Icon(Icons.Default.ChevronRight, null, tint = scheme.onPrimaryContainer)
+            }
+        }
         Surface(shape = RoundedCornerShape(22.dp), color = scheme.surfaceContainerLow) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
