@@ -2,12 +2,16 @@ name: Build APK with offline Qwen model
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ['Android CI (source-only build)']
+    types: [completed]
 
 permissions:
   contents: read
 
 jobs:
   bundled-apk:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 55
     steps:
