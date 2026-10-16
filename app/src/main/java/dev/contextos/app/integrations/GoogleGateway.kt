@@ -1,6 +1,8 @@
 package dev.contextos.app.integrations
 
 import android.app.Activity
+import android.accounts.Account
+import com.google.android.gms.auth.api.identity.RevokeAccessRequest
 import android.content.Intent
 import android.content.IntentSender
 import androidx.activity.result.IntentSenderRequest
@@ -13,6 +15,7 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.util.Base64
 
 enum class GoogleScope(val url: String, val label: String) {
     GMAIL("https://www.googleapis.com/auth/gmail.readonly", "Gmail read-only (restricted scope)"),
@@ -27,6 +30,7 @@ class GoogleGateway(private val activity: Activity) {
         private set
     var grantedScope: GoogleScope? = null
         private set
+    private var signedInAccount: Account? = null
 
     fun authorize(
         scope: GoogleScope, launchResolution: (IntentSenderRequest) -> Unit,
@@ -43,7 +47,9 @@ class GoogleGateway(private val activity: Activity) {
             } else {
                 val token = result.accessToken
                 if (token.isNullOrBlank()) message("Google did not return an access token.")
-                else { ephemeralToken = token; grantedScope = scope; onGranted() }
+                else { ephemeralToken = token; grantedScope = scope
+                    signedInAccount = result.toGoogleSignInAccount()?.account
+                    onGranted() }
             }
         }.addOnFailureListener { message("Google authorization failed: " + (it.message ?: "Unknown error")) }
     }
@@ -54,11 +60,42 @@ class GoogleGateway(private val activity: Activity) {
             val result = api.getAuthorizationResultFromIntent(data)
             val token = result.accessToken
             if (token.isNullOrBlank()) message("No access token was granted.")
-            else { ephemeralToken = token; grantedScope = scope; onGranted() }
+            else { ephemeralToken = token; grantedScope = scope
+                signedInAccount = result.toGoogleSignInAccount()?.account
+                onGranted() }
         } catch(e: Exception) { message("Consent failed: " + (e.message ?: "Unknown error")) }
     }
 
-    fun disconnect() { ephemeralToken = null; grantedScope = null }
+    fun disconnect() {
+        ephemeralToken = null
+        grantedScope = null
+        signedInAccount = null
+    }
+
+    /**
+     * Revokes the Google authorization, not merely a local token.
+     * Google revokes *all* granted scopes for this Android app and account.
+     */
+    fun revokeAll(message: (String) -> Unit, onSuccess: () -> Unit) {
+        val account = signedInAccount
+        if (account == null) {
+            message("Google account information is unavailable. Remove ContextOS access at myaccount.google.com/permissions.")
+            return
+        }
+        val request = RevokeAccessRequest.builder()
+            .setAccount(account)
+            .setScopes(GoogleScope.entries.map { Scope(it.url) })
+            .build()
+        api.revokeAccess(request)
+            .addOnSuccessListener {
+                disconnect()
+                message("Google access revoked. Locally saved Google previews will also be erased.")
+                onSuccess()
+            }
+            .addOnFailureListener {
+                message("Google revocation failed: " + (it.message ?: "Unknown error"))
+            }
+    }
 
     suspend fun listPreview(): List<KnowledgeEntry> = withContext(Dispatchers.IO) {
         val token = ephemeralToken ?: error("First authorize this Google service.")
@@ -76,7 +113,7 @@ class GoogleGateway(private val activity: Activity) {
                         val o = header.optJSONObject(k) ?: continue
                         if (o.optString("name").equals("subject", true)) subject = o.optString("value", "Email")
                     }
-                    KnowledgeEntry(title = subject.take(150),
+                    KnowledgeEntry(id = id, title = subject.take(150),
                         body = msg.optString("snippet", "(No preview)").take(1400),
                         source = "Selected Gmail preview", category = "CAREER")
                 }
@@ -88,7 +125,7 @@ class GoogleGateway(private val activity: Activity) {
                 val arr = response.optJSONArray("files")
                 if (arr == null) emptyList() else (0 until arr.length()).mapNotNull { i ->
                     val f = arr.optJSONObject(i) ?: return@mapNotNull null
-                    KnowledgeEntry(title = f.optString("name", "Drive file").take(150),
+                    KnowledgeEntry(id = f.optString("id"), title = f.optString("name", "Drive file").take(150),
                         body = "Drive metadata: " + f.optString("description", "") +
                             ". Type: " + f.optString("mimeType") +
                             ". Updated: " + f.optString("modifiedTime") +
@@ -106,12 +143,107 @@ class GoogleGateway(private val activity: Activity) {
                     val start = e.optJSONObject("start")?.let {
                         it.optString("dateTime", it.optString("date"))
                     } ?: ""
+                    val dueAt = runCatching {
+                        if (start.length == 10)
+                            java.time.LocalDate.parse(start).atStartOfDay(
+                                java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        else java.time.OffsetDateTime.parse(start).toInstant().toEpochMilli()
+                    }.getOrNull()
                     KnowledgeEntry(title = e.optString("summary", "Calendar event").take(150),
                         body = "Scheduled " + start + ". " + e.optString("description", "").take(1000),
-                        source = "Selected Google Calendar event", category = "CAREER")
+                        source = "Selected Google Calendar event", category = "CAREER",
+                        dueAt = dueAt, location = e.optString("location").take(200))
                 }
             }
         }
+    }
+
+    /**
+     * Explicit user gesture only: fetches the selected Gmail message or text-capable
+     * Drive file and returns it to the local encrypted archive. No bulk sync.
+     */
+    suspend fun readSelectedContent(entry: KnowledgeEntry): KnowledgeEntry =
+        withContext(Dispatchers.IO) {
+            val token = ephemeralToken ?: error("Google access expired; authorize again.")
+            val id = entry.id
+            require(id.matches(Regex("[a-zA-Z0-9_-]{1,200}"))) {
+                "Google file identifier is invalid."
+            }
+            val original = when (grantedScope) {
+                GoogleScope.GMAIL -> {
+                    require(entry.source == "Selected Gmail preview") {
+                        "This entry is not from Gmail."
+                    }
+                    val message = get("https://gmail.googleapis.com/gmail/v1/users/me/messages/" +
+                        id + "?format=full", token)
+                    val payload = message.optJSONObject("payload")
+                    val snippet = message.optString("snippet")
+                    // Prefer plain text to HTML. Nested multi-part emails are visited
+                    // only within this one explicitly selected message.
+                    val content = collectGmailPlainText(payload, 0).ifBlank { snippet }
+                    content.take(16000)
+                }
+                GoogleScope.DRIVE -> {
+                    require(entry.source == "Selected Google Drive metadata") {
+                        "This entry is not from Google Drive."
+                    }
+                    val meta = get("https://www.googleapis.com/drive/v3/files/" + id +
+                        "?fields=id,name,mimeType,size", token)
+                    val mime = meta.optString("mimeType")
+                    val url = when(mime) {
+                        "application/vnd.google-apps.document" ->
+                            "https://www.googleapis.com/drive/v3/files/$id/export?mimeType=text%2Fplain"
+                        "application/vnd.google-apps.spreadsheet" ->
+                            "https://www.googleapis.com/drive/v3/files/$id/export?mimeType=text%2Fcsv"
+                        "text/plain", "text/markdown", "text/csv", "text/html",
+                        "application/json", "application/xml" ->
+                            "https://www.googleapis.com/drive/v3/files/$id?alt=media"
+                        else -> error(
+                            "This file is not directly readable as text. Select it via Android's file picker instead."
+                        )
+                    }
+                    fetchText(url, token).take(16000)
+                }
+                else -> error("Authorize Gmail or Drive before importing full content.")
+            }
+            require(original.isNotBlank()) { "This selected Google item contains no readable text." }
+            KnowledgeEntry(title = entry.title,
+                body = original, source = "Explicitly imported " +
+                    (if (grantedScope == GoogleScope.GMAIL) "Gmail message" else "Drive text document"),
+                category = entry.category)
+        }
+
+    private fun collectGmailPlainText(payload: JSONObject?, depth: Int): String {
+        if (payload == null || depth > 8) return ""
+        if (payload.optString("mimeType") == "text/plain") {
+            val encoded = payload.optJSONObject("body")?.optString("data").orEmpty()
+            if (encoded.isNotBlank()) return runCatching {
+                String(Base64.getUrlDecoder().decode(encoded), Charsets.UTF_8)
+            }.getOrDefault("").take(16000)
+        }
+        val children = payload.optJSONArray("parts") ?: return ""
+        for (i in 0 until minOf(children.length(), 40)) {
+            val text = collectGmailPlainText(children.optJSONObject(i), depth + 1)
+            if (text.isNotBlank()) return text
+        }
+        return ""
+    }
+
+    private fun fetchText(address: String, token: String): String {
+        require(address.startsWith("https://www.googleapis.com/drive/v3/files/"))
+        val connection = URL(address).openConnection() as HttpURLConnection
+        connection.connectTimeout = 12000
+        connection.readTimeout = 20000
+        connection.instanceFollowRedirects = false
+        connection.setRequestProperty("Authorization", "Bearer " + token)
+        try {
+            check(connection.responseCode in 200..299) {
+                "Google Drive returned HTTP " + connection.responseCode
+            }
+            val bytes = connection.inputStream.use { it.readBoundedBytes(100_000) }
+            require(bytes.size <= 100_000) { "Document exceeds 100 KB import limit." }
+            return String(bytes, Charsets.UTF_8)
+        } finally { connection.disconnect() }
     }
 
     private fun get(address: String, token: String): JSONObject {

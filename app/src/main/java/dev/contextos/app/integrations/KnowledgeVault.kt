@@ -29,18 +29,28 @@ data class KnowledgeEntry(
     val category: String = "NOTE",
     val done: Boolean = false,
     val dueAt: Long? = null,
-    val durationMinutes: Int? = null
+    val durationMinutes: Int? = null,
+    val location: String? = null
 )
 
 object KnowledgeSearch {
     const val MAX_ITEMS = 160
     const val MAX_TEXT = 16000
     const val MAX_RESULTS = 5
-    private val word = Regex("[\\p{L}\\p{N}]{2,}")
+    private val word = Regex("[\\p{L}\\p{M}\\p{N}]{2,}")
     private val ignored = setOf("the", "what", "which", "were", "have", "been", "about", "with",
         "from", "your", "mine", "this", "that", "last", "tuesday", "ideas", "wrote", "down", "did", "not", "i")
     fun normalize(s: String): Set<String> = word.findAll(s.lowercase(Locale.ROOT))
         .map { it.value }.filter { it !in ignored }.toSet()
+    /** Structured time/task questions must preserve exact filters, not semantic near-matches. */
+    fun structuredQuery(query: String): Boolean {
+        val q = query.lowercase(Locale.ROOT)
+        return "last tuesday" in q ||
+            listOf("incomplete", "unfinished", "not completed", "pending",
+                "haven't completed").any { it in q } ||
+            listOf("overdue", "due tomorrow").any { it in q }
+    }
+
     fun search(query: String, notes: List<KnowledgeEntry>, now: LocalDate = LocalDate.now()): List<KnowledgeEntry> {
         val q = query.lowercase(Locale.ROOT)
         val tokens = normalize(query)
@@ -67,12 +77,15 @@ object KnowledgeSearch {
             .take(MAX_RESULTS).map { it.first }.toList()
     }
 
-    fun retrievedContext(query: String, entries: List<KnowledgeEntry>): String? =
-        search(query, entries).joinToString("\n") {
+    fun formatContext(entries: List<KnowledgeEntry>): String? =
+        entries.joinToString("\n") {
             "[" + it.category + "; " + it.source + "; " +
                 LocalDate.ofInstant(Instant.ofEpochMilli(it.createdAt), ZoneId.systemDefault()) + "] " +
                 it.title.take(100) + ": " + it.body.take(750)
         }.take(2500).takeIf { it.isNotBlank() }
+
+    fun retrievedContext(query: String, entries: List<KnowledgeEntry>): String? =
+        formatContext(search(query, entries))
 }
 
 /** Atomic AES-256-GCM; key never exported from Android Keystore. */
@@ -110,7 +123,8 @@ class KnowledgeVault(context: Context) {
                 o.optBoolean("done", false), if (o.has("dueAt") && !o.isNull("dueAt"))
                     o.getLong("dueAt") else null,
                 if (o.has("durationMinutes") && !o.isNull("durationMinutes"))
-                    o.getInt("durationMinutes") else null)
+                    o.getInt("durationMinutes") else null,
+                o.optString("location").takeIf { it.isNotBlank() })
         }
     }
     fun write(items: List<KnowledgeEntry>) {
@@ -122,7 +136,8 @@ class KnowledgeVault(context: Context) {
             rows.put(JSONObject().put("id", it.id).put("title", it.title)
                 .put("body", it.body).put("source", it.source).put("createdAt", it.createdAt)
                 .put("category", it.category).put("done", it.done)
-                .put("dueAt", it.dueAt).put("durationMinutes", it.durationMinutes))
+                .put("dueAt", it.dueAt).put("durationMinutes", it.durationMinutes)
+                .put("location", it.location?.take(200)))
         }
         val plaintext = JSONObject().put("version", 1).put("items", rows)
             .toString().toByteArray(Charsets.UTF_8)

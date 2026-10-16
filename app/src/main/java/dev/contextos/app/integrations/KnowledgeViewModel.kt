@@ -14,6 +14,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 import java.time.ZoneId
+import java.util.UUID
 
 data class KnowledgeState(
     val entries: List<KnowledgeEntry> = emptyList(),
@@ -23,18 +24,26 @@ data class KnowledgeState(
     val message: String = "Unlocking offline knowledge archive",
     val query: String = "",
     val includeInChat: Boolean = false,
-    val agentEnabled: Boolean = false
+    val agentEnabled: Boolean = false,
+    val semanticAvailable: Boolean = false,
+    val searchingSemantic: Boolean = false
 )
 
 class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
     private val vault = KnowledgeVault(app)
     private val parser = ImportPipeline(app)
+    private val semantic = KnowledgeSemanticRetriever(app)
     private val gate = Mutex()
     private val prefs = app.getSharedPreferences("contextos_knowledge_choices", Context.MODE_PRIVATE)
     private val _state = MutableStateFlow(KnowledgeState(
         includeInChat = prefs.getBoolean("include_chat", false),
-        agentEnabled = prefs.getBoolean("agent", false)))
+        agentEnabled = prefs.getBoolean("agent", false),
+        semanticAvailable = semantic.available()))
     val state = _state.asStateFlow()
+
+    private fun markPrivacyRevision() {
+        prefs.edit().putString("privacy_revision", UUID.randomUUID().toString()).apply()
+    }
     init {
         viewModelScope.launch(Dispatchers.IO) {
             gate.withLock {
@@ -50,8 +59,31 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
         val snapshot = _state.value
         _state.update { it.copy(query = value, results = KnowledgeSearch.search(value, snapshot.entries)) }
     }
+    fun semanticSearch() {
+        val requested = _state.value.query.trim()
+        if (requested.isBlank() || _state.value.searchingSemantic) return
+        viewModelScope.launch(Dispatchers.Default) {
+            _state.update { it.copy(searchingSemantic = true,
+                message = if (semantic.available()) "Searching imported documents on device..."
+                else "No embedding model installed; using private keyword search.") }
+            try {
+                val matches = semantic.matching(requested, _state.value.entries)
+                _state.update { current -> if (current.query == requested)
+                    current.copy(results = matches,
+                        message = if (semantic.available()) "Semantic retrieval completed on device."
+                                  else "Local keyword results.") else current }
+            } catch (error: Exception) {
+                _state.update { it.copy(message = "Search failed: " +
+                    (error.message ?: "Unknown error").take(150)) }
+            } finally {
+                _state.update { it.copy(searchingSemantic = false) }
+            }
+        }
+    }
+
     fun updateChatConsent(value: Boolean) {
         prefs.edit().putBoolean("include_chat", value).apply()
+        markPrivacyRevision()
         _state.update { it.copy(includeInChat = value) }
     }
     fun updateAgentConsent(value: Boolean) {
@@ -112,12 +144,42 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
                 } }
         }
     }
+    fun saveCommuteReminder(destination: String, departureMs: Long) {
+        if (_state.value.busy || !_state.value.agentEnabled ||
+            !prefs.getBoolean("agent_reminders", false)) {
+            _state.update { it.copy(message = "Enable agent reminders before scheduling.") }
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                CommuteReminderScheduler.waitMillis(System.currentTimeMillis(), departureMs)
+                val entry = KnowledgeEntry(
+                    title = ("Planned commute to " + destination).take(150),
+                    body = "User-approved traffic estimate; recheck the route before departure.",
+                    source = "User-approved commute plan", category = "COMMUTE_PLAN",
+                    dueAt = departureMs, location = destination.take(200)
+                )
+                append(listOf(entry), "Leave-by plan saved with encryption.")
+                // Schedule only after the encrypted archive write succeeds.
+                CommuteReminderScheduler.schedule(getApplication<Application>(), entry.id, departureMs)
+                _state.update { it.copy(message =
+                    "Inexact leave-by reminder requested. Android may delay delivery.") }
+            } catch (failure: Exception) {
+                _state.update { it.copy(message =
+                    "Could not schedule commute reminder: " +
+                        (failure.message ?: "Unknown error").take(140)) }
+            }
+        }
+    }
+
     fun toggleDone(id: String) {
         viewModelScope.launch(Dispatchers.IO) {
             gate.withLock {
                 try {
                     val updated = vault.read().map { if (it.id == id) it.copy(done = !it.done) else it }
                     vault.write(updated)
+                    semantic.clear()
+                    markPrivacyRevision()
                     _state.update { it.copy(entries = updated,
                         results = KnowledgeSearch.search(it.query, updated), message = "Progress updated.") }
                 } catch(e: Exception) {
@@ -132,6 +194,8 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
                 try {
                     val updated = vault.read().filterNot { it.id == id }
                     vault.write(updated)
+                    semantic.clear()
+                    markPrivacyRevision()
                     _state.update { it.copy(entries = updated,
                         results = KnowledgeSearch.search(it.query, updated), message = "Deleted from archive.") }
                 } catch(e: Exception) {
@@ -140,10 +204,34 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+    fun deleteGoogleImports() {
+        viewModelScope.launch(Dispatchers.IO) {
+            gate.withLock {
+                try {
+                    val updated = vault.read().filterNot { entry ->
+                        entry.source.startsWith("Selected Gmail") ||
+                            entry.source.startsWith("Selected Google") ||
+                            entry.source.startsWith("Explicitly imported Gmail") ||
+                            entry.source.startsWith("Explicitly imported Drive")
+                    }
+                    vault.write(updated)
+                    semantic.clear()
+                    markPrivacyRevision()
+                    _state.update { it.copy(entries = updated,
+                        results = KnowledgeSearch.search(it.query, updated),
+                        message = "Locally saved Google-imported content erased.") }
+                } catch (failure: Exception) {
+                    _state.update { it.copy(message = "Could not erase Google imports: " +
+                        (failure.message ?: "Unknown error").take(100)) }
+                }
+            }
+        }
+    }
+
     fun clearAll() {
         viewModelScope.launch(Dispatchers.IO) {
             gate.withLock {
-                try { vault.write(emptyList()); _state.update {
+                try { vault.write(emptyList()); semantic.clear(); markPrivacyRevision(); _state.update {
                     it.copy(entries = emptyList(), results = emptyList(),
                         message = "Encrypted knowledge archive cleared.")
                 } } catch(e: Exception) { _state.update {
@@ -160,6 +248,8 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
             require(notes.size <= remaining) { "Archive is full. Remove older entries first." }
             val updated = prev + notes
             vault.write(updated)
+            semantic.clear()
+            markPrivacyRevision()
             _state.update { it.copy(entries = updated, results = KnowledgeSearch.search(it.query, updated),
                 message = message, error = null) }
         }
@@ -171,7 +261,8 @@ class KnowledgeViewModel(app: Application) : AndroidViewModel(app) {
                 val prefs = context.getSharedPreferences("contextos_knowledge_choices", Context.MODE_PRIVATE)
                 if (!prefs.getBoolean("include_chat", false)) return@withContext null
                 val entries = runCatching { KnowledgeVault(context).read() }.getOrDefault(emptyList())
-                val result = KnowledgeSearch.retrievedContext(prompt, entries)
+                val selected = KnowledgeSemanticRetriever(context).matching(prompt, entries)
+                val result = KnowledgeSearch.formatContext(selected)
                 if (prefs.getBoolean("include_chat", false)) result else null
             }
     }

@@ -48,7 +48,11 @@ class AgentReminderWorker(context: Context, params: WorkerParameters) : Worker(c
         val entries = runCatching { KnowledgeVault(context).read() }.getOrElse {
             return Result.success() // Vault unavailable; never overwrite it.
         }
-        val candidate = entries.filter { !it.done && it.dueAt != null }.mapNotNull { item ->
+        // User feedback also gates scheduled delivery; dismissed suggestions stay silent.
+        val feedback = AgentFeedback(context)
+        val candidate = entries.filter {
+            !it.done && it.dueAt != null && feedback.rating("deadline:" + it.id) != -1
+        }.mapNotNull { item ->
             val date = Instant.ofEpochMilli(item.dueAt!!).atZone(ZoneId.systemDefault()).toLocalDate()
             val days = ChronoUnit.DAYS.between(today, date)
             if (days in 0L..1L && prefs.getString("reminded_" + item.id, "") != today.toString())

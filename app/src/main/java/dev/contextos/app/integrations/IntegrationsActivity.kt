@@ -7,6 +7,9 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.speech.RecognitionListener
+import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -46,7 +49,14 @@ class IntegrationsActivity : ComponentActivity() {
     private var recognizedVoice by mutableStateOf("")
     private var healthSummary by mutableStateOf("")
     private var cloudResult by mutableStateOf("")
+    private var routeResult by mutableStateOf("")
+    private var commuteDeparture by mutableStateOf<Long?>(null)
     private var deadlineAlerts by mutableStateOf(false)
+    private var onDeviceRecognizer: SpeechRecognizer? = null
+    private val microphonePermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) beginOnDeviceSpeech() else notice = "Microphone permission denied."
+    }
     private val notifyPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         updateDeadlineAlerts(granted)
     }
@@ -77,13 +87,6 @@ class IntegrationsActivity : ComponentActivity() {
             { message -> notice = message }, { loadGooglePreview() })
         else notice = "Google access not granted."
     }
-    private val voiceRecognition = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        if (it.resultCode == RESULT_OK) {
-            recognizedVoice = it.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-                ?.firstOrNull().orEmpty()
-            if (recognizedVoice.isNotBlank()) notice = "Voice text ready for review. Nothing was saved."
-        }
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -99,7 +102,8 @@ class IntegrationsActivity : ComponentActivity() {
                     state = state, notice = notice, googlePreview = googlePreview,
                     calendarPreview = calendarPreview, healthSummary = healthSummary,
                     voiceText = recognizedVoice, cloudResult = cloudResult,
-                    search = library::updateSearch, save = library::add, remove = library::delete,
+                    search = library::updateSearch, semanticSearch = library::semanticSearch,
+                    save = library::add, remove = library::delete,
                     done = library::toggleDone, clear = library::clearAll,
                     savePreview = library::savePreview, clearMessage = library::clearMessage,
                     shareChat = library::updateChatConsent, setAgent = { enabled ->
@@ -117,6 +121,24 @@ class IntegrationsActivity : ComponentActivity() {
                         google.authorize(scope, { launch -> googleResolution.launch(launch) },
                             { message -> notice = message }, { loadGooglePreview() }) },
                     disconnectGoogle = { google.disconnect(); googlePreview = emptyList() },
+                    revokeGoogle = {
+                        google.revokeAll({ notice = it }) {
+                            googlePreview = emptyList()
+                            library.deleteGoogleImports()
+                        }
+                    },
+                    fetchSelectedGoogle = { item ->
+                        lifecycleScope.launch {
+                            notice = "Reading selected Google content..."
+                            try {
+                                val saved = google.readSelectedContent(item)
+                                library.savePreview(saved)
+                                notice = "Selected " + saved.source + " added to encrypted search."
+                            } catch (failure: Exception) {
+                                notice = "Google content not imported: " + (failure.message ?: "Unknown failure")
+                            }
+                        }
+                    },
                     agentReminders = deadlineAlerts,
                     toggleReminders = { value ->
                         if (!value) updateDeadlineAlerts(false)
@@ -131,7 +153,53 @@ class IntegrationsActivity : ComponentActivity() {
                         startActivity(Intent(this, dev.contextos.app.MainActivity::class.java)
                             .putExtra("voice_prompt", spoken))
                     },
-                    route = ::openRoute,
+                    route = ::openRoute, routeResult = routeResult,
+                    commuteDeparture = commuteDeparture,
+                    saveCommuteReminder = { destinationName, departureMs ->
+                        library.saveCommuteReminder(destinationName, departureMs)
+                    },
+                    estimateRoute = { from, to, apiKey, arrival, buffer ->
+                        lifecycleScope.launch {
+                            commuteDeparture = null
+                            routeResult = "Requesting live route (user initiated)..."
+                            try {
+                                val result = LiveRoutePlanner.estimate(from, to, apiKey)
+                                val liveMinutes = (result.travelSeconds + 59) / 60
+                                val saved = runCatching {
+                                    java.time.LocalDateTime.parse(arrival.trim())
+                                        .atZone(java.time.ZoneId.systemDefault())
+                                        .toInstant().toEpochMilli()
+                                }.getOrNull()
+                                val departAt = saved?.let {
+                                    LiveRoutePlanner.leaveByMillis(
+                                        it, result.travelSeconds, buffer.coerceIn(0, 120))
+                                }
+                                commuteDeparture = departAt?.takeIf {
+                                    it > System.currentTimeMillis() &&
+                                        it - System.currentTimeMillis() <= 14L * 24 * 60 * 60 * 1000
+                                }
+                                val departure = departAt?.let {
+                                    java.time.Instant.ofEpochMilli(it)
+                                        .atZone(java.time.ZoneId.systemDefault()).toLocalDateTime()
+                                }
+                                val delay = LiveRoutePlanner.delayMinutes(
+                                    result.travelSeconds, result.typicalSeconds)
+                                val alert = when {
+                                    delay == null -> " Traffic baseline unavailable."
+                                    delay >= 8 -> " Traffic delay warning: about " + delay +
+                                        " extra minutes versus typical uncongested travel."
+                                    else -> " No major traffic delay indicated."
+                                }
+                                routeResult = "Live traffic-aware estimate: " + liveMinutes + " min, " +
+                                    result.distanceMeters / 1000.0 + " km." + alert +
+                                    (if (departure == null) "" else " Suggested departure: " + departure) +
+                                    " · " + result.advisory
+                            } catch (e: Exception) {
+                                routeResult = "Could not calculate live route: " +
+                                    (e.message ?: "Unknown error").take(180)
+                            }
+                        }
+                    },
                     remote = { endpoint, key, model, question ->
                         lifecycleScope.launch {
                             try { cloudResult = "Requesting consented remote completion..."
@@ -186,13 +254,64 @@ class IntegrationsActivity : ComponentActivity() {
         }
     }
     private fun startVoice() {
+        if (Build.VERSION.SDK_INT < 31 || !SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) {
+            notice = "Offline speech recognition is not available on this device. Nothing was sent to a speech service."
+            return
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED) {
+            microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        beginOnDeviceSpeech()
+    }
+
+    private fun beginOnDeviceSpeech() {
+        if (Build.VERSION.SDK_INT < 31 || !SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) {
+            notice = "Android does not offer an on-device speech recognition service."
+            return
+        }
         try {
-            voiceRecognition.launch(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-                putExtra(RecognizerIntent.EXTRA_PROMPT, "Dictate a note (offline preferred, not guaranteed)")
+            onDeviceRecognizer?.destroy()
+            val engine = SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
+            onDeviceRecognizer = engine
+            engine.setRecognitionListener(object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) {
+                    notice = "Listening on device. Dictate a note."
+                }
+                override fun onBeginningOfSpeech() {}
+                override fun onRmsChanged(rmsdB: Float) {}
+                override fun onBufferReceived(buffer: ByteArray?) {}
+                override fun onEndOfSpeech() {}
+                override fun onError(error: Int) {
+                    notice = "On-device speech recognition failed (code " + error + ")."
+                }
+                override fun onResults(results: Bundle?) {
+                    recognizedVoice = results?.getStringArrayList(
+                        SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
+                    notice = if (recognizedVoice.isNotBlank())
+                        "Offline speech text ready for review. Nothing has been saved."
+                    else "No words were recognized."
+                }
+                override fun onPartialResults(partialResults: Bundle?) {}
+                override fun onEvent(eventType: Int, params: Bundle?) {}
             })
-        } catch(e: Exception) { notice = "No speech recognition app is installed." }
+            engine.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                    RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            })
+        } catch (failure: Exception) {
+            notice = "Could not initialize on-device speech: " +
+                (failure.message ?: "Unavailable")
+        }
+    }
+
+    override fun onDestroy() {
+        onDeviceRecognizer?.destroy()
+        onDeviceRecognizer = null
+        super.onDestroy()
     }
     private fun openRoute(destination: String) {
         if (destination.isBlank()) { notice = "Enter the destination first.";return }
@@ -220,6 +339,7 @@ private fun IntegrationsScreen(
     state: KnowledgeState, notice: String, googlePreview: List<KnowledgeEntry>,
     calendarPreview: List<KnowledgeEntry>, healthSummary: String, voiceText: String,
     cloudResult: String, search: (String) -> Unit,
+    semanticSearch: () -> Unit,
     save: (String, String, String, String?) -> Unit,
     remove: (String) -> Unit, done: (String) -> Unit, clear: () -> Unit,
     savePreview: (KnowledgeEntry) -> Unit, clearMessage: () -> Unit,
@@ -227,9 +347,14 @@ private fun IntegrationsScreen(
     chooseDocuments: () -> Unit, choosePhoto: () -> Unit,
     calendar: () -> Unit, health: () -> Unit, notifications: () -> Unit,
     google: (GoogleScope) -> Unit, disconnectGoogle: () -> Unit,
+    revokeGoogle: () -> Unit,
+    fetchSelectedGoogle: (KnowledgeEntry) -> Unit,
     agentReminders: Boolean, toggleReminders: (Boolean) -> Unit,
     voice: () -> Unit, askOffline: (String) -> Unit,
     route: (String) -> Unit,
+    routeResult: String,
+    commuteDeparture: Long?, saveCommuteReminder: (String, Long) -> Unit,
+    estimateRoute: (String, String, String, String, Int) -> Unit,
     remote: (String, String, String, String) -> Unit
 ) {
     var title by remember { mutableStateOf("") }
@@ -237,6 +362,10 @@ private fun IntegrationsScreen(
     var category by remember { mutableStateOf("NOTE") }
     var due by remember { mutableStateOf("") }
     var destination by remember { mutableStateOf("") }
+    var origin by remember { mutableStateOf("") }
+    var routesApiKey by remember { mutableStateOf("") }
+    var arrival by remember { mutableStateOf("") }
+    var routeBuffer by remember { mutableIntStateOf(10) }
     var notificationPackage by remember { mutableStateOf("") }
     var captureNotifications by remember { mutableStateOf(false) }
     var endpoint by remember { mutableStateOf("") }
@@ -245,8 +374,10 @@ private fun IntegrationsScreen(
     var cloudPrompt by remember { mutableStateOf("") }
     var confirmCloud by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var confirmGoogleRevoke by remember { mutableStateOf(false) }
     val app = androidx.compose.ui.platform.LocalContext.current
     val capture = remember { app.getSharedPreferences("contextos_notification_capture", android.content.Context.MODE_PRIVATE) }
+    val agentFeedback = remember { AgentFeedback(app) }
     LaunchedEffect(Unit) {
         notificationPackage = capture.getString("package", "").orEmpty()
         captureNotifications = capture.getBoolean("enabled", false)
@@ -258,6 +389,16 @@ private fun IntegrationsScreen(
         confirmButton = { TextButton(onClick = { confirmCloud = false
             remote(endpoint, apiKey, model, cloudPrompt) }) { Text("Send once") } },
         dismissButton = { TextButton(onClick = { confirmCloud = false }) { Text("Cancel") } })
+    if (confirmGoogleRevoke) AlertDialog(
+        onDismissRequest = { confirmGoogleRevoke = false },
+        title = { Text("Revoke Google account access?") },
+        text = { Text("Google may revoke all ContextOS scopes for the authorized account. Saved Google-sourced previews and imported Gmail/Drive text will also be erased locally. Other user-selected files are not affected.") },
+        confirmButton = { TextButton(onClick = {
+            confirmGoogleRevoke = false
+            revokeGoogle()
+        }) { Text("Revoke and erase") } },
+        dismissButton = { TextButton(onClick = { confirmGoogleRevoke = false }) { Text("Cancel") } }
+    )
     if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false },
         title = { Text("Erase encrypted knowledge?") },
         text = { Text("All manually saved documents, plans and Timeline entries will be deleted.") },
@@ -283,6 +424,15 @@ private fun IntegrationsScreen(
             OutlinedTextField(value = state.query, onValueChange = search,
                 label = { Text("Search offline knowledge") }, modifier = Modifier.fillMaxWidth(),
                 placeholder = { Text("Which projects haven't I completed?") }, singleLine = true)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = semanticSearch,
+                    enabled = state.query.isNotBlank() && !state.searchingSemantic) {
+                    Text(if (state.semanticAvailable) "Search by meaning (offline)" else "Search keywords")
+                }
+                if (state.searchingSemantic) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+            }
+            if (!state.semanticAvailable) Text("For semantic document retrieval, import a compatible .tflite Text Embedder in the Memory tab. Keyword search works without it.",
+                style = MaterialTheme.typography.bodySmall)
             val shown = if (state.query.isBlank()) state.entries.takeLast(8).asReversed() else state.results
             shown.take(12).forEach { entry ->
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -332,7 +482,7 @@ private fun IntegrationsScreen(
             if (voiceText.isNotBlank()) OutlinedButton(onClick = { askOffline(voiceText) }) {
                 Text("Ask offline AI about dictated text")
             }
-            Text("Android speech services may use the network despite offline preference. Review text before saving.",
+            Text("Speech capture requires Android 12+ and an installed ON-DEVICE recognizer. It never falls back silently to a network recognizer; review all text before saving.",
                 style = MaterialTheme.typography.bodySmall)
         }
 
@@ -340,7 +490,7 @@ private fun IntegrationsScreen(
             "Import only selected items via Android document/photo pickers. Photo text recognition is on-device.") {
             OutlinedButton(onClick = chooseDocuments) { Text("Import document or Timeline export") }
             OutlinedButton(onClick = choosePhoto) { Text("Choose photo and recognize text") }
-            Text("Supports PDF text, TXT, Markdown, CSV, JSON, HTML and calendar text. Scanned PDFs without a text layer require photo OCR. Timeline JSON parsing supports several known export layouts.",
+            Text("Supports PDF text, TXT, Markdown, CSV, JSON, HTML and calendar text. For scanned PDFs with no text layer, the first five pages are OCRed locally within a memory limit. WhatsApp .txt exports and known Timeline JSON layouts are supported.",
                 style = MaterialTheme.typography.bodySmall)
         }
 
@@ -349,13 +499,33 @@ private fun IntegrationsScreen(
             GoogleScope.entries.forEach { scope ->
                 OutlinedButton(onClick = { google(scope) }) { Text("Authorize " + scope.name.lowercase()) }
             }
-            TextButton(onClick = disconnectGoogle) { Text("Forget temporary Google access token") }
+            TextButton(onClick = disconnectGoogle) { Text("Forget temporary token (this session)") }
+            OutlinedButton(onClick = { confirmGoogleRevoke = true }) {
+                Text("Revoke Google authorization")
+            }
             googlePreview.take(20).forEach { entry ->
                 Text(entry.title, fontWeight = FontWeight.Medium)
                 Text(entry.body.take(220), style = MaterialTheme.typography.bodySmall)
-                TextButton(onClick = { savePreview(entry) }, enabled = !state.busy) { Text("Save this preview locally") }
+                TextButton(onClick = { savePreview(entry) }, enabled = !state.busy) {
+                    Text("Save this preview locally")
+                }
+                if (!entry.location.isNullOrBlank() && entry.dueAt != null) {
+                    TextButton(onClick = {
+                        destination = entry.location.orEmpty()
+                        arrival = java.time.LocalDateTime.ofInstant(
+                            java.time.Instant.ofEpochMilli(entry.dueAt!!),
+                            java.time.ZoneId.systemDefault()).toString().take(16)
+                    }) { Text("Use event for commute planning") }
+                }
+                if (entry.source == "Selected Gmail preview" ||
+                    entry.source == "Selected Google Drive metadata") {
+                    TextButton(onClick = { fetchSelectedGoogle(entry) },
+                        enabled = !state.busy) {
+                        Text("Import selected full text into encrypted search")
+                    }
+                }
             }
-            Text("The Drive preview indexes metadata only; it does not download private Drive document contents.",
+            Text("Drive previews contain metadata only. Tap Import selected full text to fetch a supported document after explicit approval; other formats can be selected via the Android document picker.",
                 style = MaterialTheme.typography.bodySmall)
         }
 
@@ -366,6 +536,14 @@ private fun IntegrationsScreen(
                 Text(entry.title, fontWeight = FontWeight.Medium)
                 Text(entry.body.take(200), style = MaterialTheme.typography.bodySmall)
                 TextButton(onClick = { savePreview(entry) }) { Text("Save event") }
+                if (!entry.location.isNullOrBlank() && entry.dueAt != null) {
+                    TextButton(onClick = {
+                        destination = entry.location.orEmpty()
+                        arrival = java.time.LocalDateTime.ofInstant(
+                            java.time.Instant.ofEpochMilli(entry.dueAt!!),
+                            java.time.ZoneId.systemDefault()).toString().take(16)
+                    }) { Text("Plan travel to this event") }
+                }
             }
             OutlinedButton(onClick = health) { Text("Authorize Health Connect steps") }
             if (healthSummary.isNotBlank()) Text(healthSummary)
@@ -403,15 +581,49 @@ private fun IntegrationsScreen(
                 label = { Text("Destination for external Maps directions") },
                 modifier = Modifier.fillMaxWidth())
             OutlinedButton(onClick = { route(destination) }) { Text("Open Google Maps directions") }
+            OutlinedTextField(value = origin, onValueChange = { origin = it.take(180) },
+                label = { Text("Origin for live route") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = routesApiKey, onValueChange = { routesApiKey = it.take(1024) },
+                label = { Text("Google Routes API key (not saved)") },
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = arrival, onValueChange = { arrival = it.take(19) },
+                label = { Text("Optional arrival YYYY-MM-DDTHH:MM") },
+                modifier = Modifier.fillMaxWidth())
+            Text("Arrival buffer: " + routeBuffer + " minutes")
+            Slider(value = routeBuffer.toFloat(), onValueChange = { routeBuffer = it.toInt() },
+                valueRange = 0f..60f, steps = 59)
+            Button(onClick = { estimateRoute(origin, destination, routesApiKey, arrival, routeBuffer) },
+                enabled = origin.isNotBlank() && destination.isNotBlank() && routesApiKey.isNotBlank()) {
+                Text("Calculate traffic-aware route")
+            }
+            if (routeResult.isNotBlank()) Text(routeResult, style = MaterialTheme.typography.bodySmall)
+            if (commuteDeparture != null) {
+                OutlinedButton(
+                    onClick = { saveCommuteReminder(destination, commuteDeparture) },
+                    enabled = state.agentEnabled && agentReminders
+                ) { Text("Save leave-by reminder (inexact)") }
+                if (!state.agentEnabled || !agentReminders) {
+                    Text("Enable local agent and opt-in notifications below to save a departure reminder.",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            Text("Live route uses Google Routes API only after you tap Calculate. Address details leave your phone; a user-provided API key with Routes API and billing enabled is required.",
+                style = MaterialTheme.typography.bodySmall)
         }
 
         IntegrationCard("8 · Career & learning companion",
             "Uses only your saved project, interview and learning entries or approved calendar/email previews.") {
             val items = state.entries.filter { it.category in setOf("PROJECT","CAREER","LEARNING") }
             Text("Pending: " + items.count { !it.done } + " · Completed: " + items.count { it.done })
-            AgentPlanner.propose(items).take(3).forEach {
+            agentFeedback.personalize(AgentPlanner.propose(items)).take(3).forEach {
                 Text(it.title, fontWeight = FontWeight.SemiBold)
                 Text(it.reason, style = MaterialTheme.typography.bodySmall)
+            }
+            CareerPreparation.nextTopics(items).forEach { topic ->
+                Text("Suggested preparation: " + topic,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary)
             }
         }
 
@@ -428,9 +640,31 @@ private fun IntegrationsScreen(
             }
             Text("Uses saved deadlines only. Checks about twice daily; quiet hours and daily limits from Settings still apply.",
                 style = MaterialTheme.typography.bodySmall)
-            if (state.agentEnabled) AgentPlanner.propose(state.entries).forEach {
-                Text(it.title, fontWeight = FontWeight.Medium)
-                Text(it.reason, style = MaterialTheme.typography.bodySmall)
+            if (state.agentEnabled) {
+                agentFeedback.personalize(AgentPlanner.propose(state.entries)).forEach { suggested ->
+                    Surface(color = MaterialTheme.colorScheme.surfaceContainer,
+                        shape = RoundedCornerShape(14.dp)) {
+                        Column(Modifier.fillMaxWidth().padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Text(suggested.title, fontWeight = FontWeight.Medium)
+                            Text(suggested.reason, style = MaterialTheme.typography.bodySmall)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(onClick = {
+                                    agentFeedback.set(suggested.id, 1)
+                                }) {
+                                    Text(if (agentFeedback.rating(suggested.id) == 1)
+                                        "✓ Helpful" else "Helpful")
+                                }
+                                TextButton(onClick = {
+                                    agentFeedback.set(suggested.id, -1)
+                                }) { Text("Not useful") }
+                            }
+                        }
+                    }
+                }
+                TextButton(onClick = agentFeedback::reset) {
+                    Text("Reset personalized suggestions")
+                }
             }
             Text("No automated external action, unapproved email reply or guaranteed background alert.",
                 style = MaterialTheme.typography.bodySmall)

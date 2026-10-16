@@ -6,8 +6,11 @@ import android.provider.OpenableColumns
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
+import com.tom_roush.pdfbox.rendering.PDFRenderer
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.label.ImageLabeling
+import com.google.mlkit.vision.label.defaults.ImageLabelerOptions
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
@@ -97,7 +100,10 @@ class ImportPipeline(private val context: Context) {
             "pdf" -> {
                 PDFBoxResourceLoader.init(context)
                 PDDocument.load(bytes).use { pdf ->
-                    PDFTextStripper().apply { endPage = minOf(pdf.numberOfPages, 80) }.getText(pdf)
+                    val extracted = PDFTextStripper().apply {
+                        endPage = minOf(pdf.numberOfPages, 80)
+                    }.getText(pdf)
+                    if (extracted.isNotBlank()) extracted else ocrScannedPdf(pdf)
                 }
             }
             else -> String(bytes, Charsets.UTF_8).let {
@@ -105,6 +111,12 @@ class ImportPipeline(private val context: Context) {
             }
         }.trim()
         require(text.isNotBlank()) { "No extractable text found. Scanned PDFs may require OCR." }
+        if (ext == "txt" && (
+                text.contains("] ") || text.lineSequence().take(10).any { it.contains(" - ") }
+            )) {
+            val conversation = WhatsAppExportParser.parse(text)
+            if (conversation.isNotEmpty()) return@withContext conversation
+        }
         if (ext == "json" && (text.contains("timelineObjects") || text.contains("semanticSegments"))) {
             val trips = runCatching { TimelineParser.parse(text) }.getOrDefault(emptyList())
             if (trips.isNotEmpty()) return@withContext trips
@@ -115,14 +127,52 @@ class ImportPipeline(private val context: Context) {
         }
     }
 
+    /**
+     * OCR fallback only when a selected PDF has no extractable text layer.
+     * Hard cap of 5 pages and 4M pixels per page to avoid unbounded mobile RAM use.
+     */
+    private suspend fun ocrScannedPdf(pdf: PDDocument): String {
+        val engine = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        val renderer = PDFRenderer(pdf)
+        val pages = mutableListOf<String>()
+        try {
+            for (index in 0 until minOf(5, pdf.numberOfPages)) {
+                val bounds = pdf.getPage(index).mediaBox
+                val width = (bounds.width * 96f / 72f).toInt()
+                val height = (bounds.height * 96f / 72f).toInt()
+                if (width <= 0 || height <= 0 || width.toLong() * height > 4_000_000L)
+                    continue
+                val bitmap = renderer.renderImageWithDPI(index, 96f)
+                try {
+                    val words = engine.process(InputImage.fromBitmap(bitmap, 0))
+                        .await().text.trim()
+                    if (words.isNotBlank()) pages += "Page " + (index + 1) + ":\n" + words
+                } finally { bitmap.recycle() }
+            }
+        } finally { engine.close() }
+        return pages.joinToString("\n\n").take(12 * KnowledgeSearch.MAX_TEXT)
+    }
+
     suspend fun readSelectedPhoto(uri: Uri): KnowledgeEntry = withContext(Dispatchers.IO) {
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        val labeler = ImageLabeling.getClient(ImageLabelerOptions.DEFAULT_OPTIONS)
         try {
             val image = InputImage.fromFilePath(context, uri)
             val recognized = recognizer.process(image).await().text.trim()
-            require(recognized.isNotBlank()) { "No text recognized in the selected image." }
-            KnowledgeEntry(title = "Photo OCR: " + title(uri), body = recognized.take(16000),
-                source = "Selected photo (offline OCR)", category = "DOCUMENT")
-        } finally { recognizer.close() }
+            val labels = labeler.process(image).await().filter { it.confidence >= 0.6f }
+                .take(8).joinToString(", ") { it.text }
+            require(recognized.isNotBlank() || labels.isNotBlank()) {
+                "No local text or recognizable objects found in the selected image."
+            }
+            KnowledgeEntry(title = "Selected photo: " + title(uri),
+                body = ("Visible labels (automatic estimates): " + labels +
+                    if (recognized.isBlank()) "" else "\nExtracted visible text: " + recognized)
+                    .take(16000),
+                source = "User-selected photo · on-device OCR and image labels",
+                category = "DOCUMENT")
+        } finally {
+            recognizer.close()
+            labeler.close()
+        }
     }
 }
