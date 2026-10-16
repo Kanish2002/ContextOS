@@ -28,6 +28,22 @@ class KnowledgeSearchTest {
         assertEquals(listOf("JVM Lens"), matches.map { it.title })
     }
 
+    @Test fun unfinishedQuestionVariantsAreFilteredWithoutLeakingCompletedProjects() {
+        val items = listOf(
+            KnowledgeEntry(title = "Pending platform", body = "needs integration", source = "user", category = "PROJECT"),
+            KnowledgeEntry(title = "Finished platform", body = "released", source = "user",
+                category = "PROJECT", done = true),
+            KnowledgeEntry(title = "Unrelated draft", body = "incomplete", source = "user", category = "NOTE")
+        )
+        listOf("Which projects haven't I completed?",
+               "Which projects haven’t I completed?",
+               "Which projects haven't I finished?",
+               "Show unfinished projects").forEach { question ->
+            assertEquals(question, listOf("Pending platform"),
+                KnowledgeSearch.search(question, items).map { it.title })
+        }
+    }
+
     @Test fun noMatchDoesNotLeakAllDocuments() {
         val saved = listOf(KnowledgeEntry(title = "Banking", body = "ledger", source = "file"))
         assertNull(KnowledgeSearch.retrievedContext("I enjoy mangoes", saved))

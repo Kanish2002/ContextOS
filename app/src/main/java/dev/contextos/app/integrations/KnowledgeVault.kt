@@ -42,12 +42,21 @@ object KnowledgeSearch {
         "from", "your", "mine", "this", "that", "last", "tuesday", "ideas", "wrote", "down", "did", "not", "i")
     fun normalize(s: String): Set<String> = word.findAll(s.lowercase(Locale.ROOT))
         .map { it.value }.filter { it !in ignored }.toSet()
+    /**
+     * Handle interrogative forms such as "Which projects haven't I completed?"
+     * without mistakenly treating positive "completed projects" as unfinished.
+     * Keep structured-question detection and filtering backed by the SAME predicate.
+     */
+    private val unfinishedQuestion = Regex("""\bhaven['’]t\s+(?:i\s+)?(?:completed|finished)\b""")
+    private fun asksForUnfinished(query: String): Boolean =
+        listOf("incomplete", "unfinished", "not completed", "not finished",
+            "not yet completed", "not yet finished", "pending").any { it in query } ||
+            unfinishedQuestion.containsMatchIn(query)
+
     /** Structured time/task questions must preserve exact filters, not semantic near-matches. */
     fun structuredQuery(query: String): Boolean {
         val q = query.lowercase(Locale.ROOT)
-        return "last tuesday" in q ||
-            listOf("incomplete", "unfinished", "not completed", "pending",
-                "haven't completed").any { it in q } ||
+        return "last tuesday" in q || asksForUnfinished(q) ||
             listOf("overdue", "due tomorrow").any { it in q }
     }
 
@@ -56,8 +65,7 @@ object KnowledgeSearch {
         val tokens = normalize(query)
         val lastTuesday = if ("last tuesday" in q)
             now.with(TemporalAdjusters.previous(DayOfWeek.TUESDAY)) else null
-        val unfinished = listOf("incomplete", "unfinished", "not completed", "pending", "haven't completed")
-            .any { it in q }
+        val unfinished = asksForUnfinished(q)
         val projects = listOf("project", "projects", "learning", "course").any { it in q }
         return notes.asSequence().filter { note ->
             (!unfinished || !note.done) &&
