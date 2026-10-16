@@ -6,6 +6,7 @@ import com.google.mediapipe.tasks.text.textembedder.TextEmbedder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * On-device semantic search for explicitly imported, encrypted knowledge.
@@ -14,7 +15,7 @@ import java.io.File
  */
 class KnowledgeSemanticRetriever(private val context: Context) {
     private val model = File(context.filesDir, "contextos_text_embedder.tflite")
-    private val embeddings = HashMap<String, Pair<String, Embedding>>()
+    private val embeddings = ConcurrentHashMap<String, Pair<String, Embedding>>()
 
     fun available(): Boolean = model.isFile && model.length() > 100_000L
 
