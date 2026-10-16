@@ -1,6 +1,8 @@
 package dev.contextos.app.integrations
 
 import android.app.Activity
+import android.accounts.Account
+import com.google.android.gms.auth.api.identity.RevokeAccessRequest
 import android.content.Intent
 import android.content.IntentSender
 import androidx.activity.result.IntentSenderRequest
@@ -28,6 +30,7 @@ class GoogleGateway(private val activity: Activity) {
         private set
     var grantedScope: GoogleScope? = null
         private set
+    private var signedInAccount: Account? = null
 
     fun authorize(
         scope: GoogleScope, launchResolution: (IntentSenderRequest) -> Unit,
@@ -44,7 +47,9 @@ class GoogleGateway(private val activity: Activity) {
             } else {
                 val token = result.accessToken
                 if (token.isNullOrBlank()) message("Google did not return an access token.")
-                else { ephemeralToken = token; grantedScope = scope; onGranted() }
+                else { ephemeralToken = token; grantedScope = scope
+                    signedInAccount = result.toGoogleSignInAccount()?.account
+                    onGranted() }
             }
         }.addOnFailureListener { message("Google authorization failed: " + (it.message ?: "Unknown error")) }
     }
@@ -55,11 +60,42 @@ class GoogleGateway(private val activity: Activity) {
             val result = api.getAuthorizationResultFromIntent(data)
             val token = result.accessToken
             if (token.isNullOrBlank()) message("No access token was granted.")
-            else { ephemeralToken = token; grantedScope = scope; onGranted() }
+            else { ephemeralToken = token; grantedScope = scope
+                signedInAccount = result.toGoogleSignInAccount()?.account
+                onGranted() }
         } catch(e: Exception) { message("Consent failed: " + (e.message ?: "Unknown error")) }
     }
 
-    fun disconnect() { ephemeralToken = null; grantedScope = null }
+    fun disconnect() {
+        ephemeralToken = null
+        grantedScope = null
+        signedInAccount = null
+    }
+
+    /**
+     * Revokes the Google authorization, not merely a local token.
+     * Google revokes *all* granted scopes for this Android app and account.
+     */
+    fun revokeAll(message: (String) -> Unit, onSuccess: () -> Unit) {
+        val account = signedInAccount
+        if (account == null) {
+            message("Google account information is unavailable. Remove ContextOS access at myaccount.google.com/permissions.")
+            return
+        }
+        val request = RevokeAccessRequest.builder()
+            .setAccount(account)
+            .setScopes(GoogleScope.entries.map { Scope(it.url) })
+            .build()
+        api.revokeAccess(request)
+            .addOnSuccessListener {
+                disconnect()
+                message("Google access revoked. Locally saved Google previews will also be erased.")
+                onSuccess()
+            }
+            .addOnFailureListener {
+                message("Google revocation failed: " + (it.message ?: "Unknown error"))
+            }
+    }
 
     suspend fun listPreview(): List<KnowledgeEntry> = withContext(Dispatchers.IO) {
         val token = ephemeralToken ?: error("First authorize this Google service.")
