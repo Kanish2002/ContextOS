@@ -22,6 +22,9 @@ object LiveRoutePlanner {
         return arrivalAtMs - travelSeconds * 1000 - bufferMinutes * 60_000L
     }
 
+    fun delayMinutes(liveSeconds: Long, baselineSeconds: Long?): Long? =
+        baselineSeconds?.let { ((liveSeconds - it).coerceAtLeast(0) + 59) / 60 }
+
     private fun seconds(value: String): Long {
         require(value.endsWith("s")) { "Expected Routes API duration in seconds." }
         return value.dropLast(1).toDouble().toLong().coerceIn(0, 86400L)
