@@ -46,6 +46,7 @@ class IntegrationsActivity : ComponentActivity() {
     private var recognizedVoice by mutableStateOf("")
     private var healthSummary by mutableStateOf("")
     private var cloudResult by mutableStateOf("")
+    private var routeResult by mutableStateOf("")
     private var deadlineAlerts by mutableStateOf(false)
     private val notifyPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         updateDeadlineAlerts(granted)
@@ -131,7 +132,33 @@ class IntegrationsActivity : ComponentActivity() {
                         startActivity(Intent(this, dev.contextos.app.MainActivity::class.java)
                             .putExtra("voice_prompt", spoken))
                     },
-                    route = ::openRoute,
+                    route = ::openRoute, routeResult = routeResult,
+                    estimateRoute = { from, to, apiKey, arrival, buffer ->
+                        lifecycleScope.launch {
+                            routeResult = "Requesting live route (user initiated)..."
+                            try {
+                                val result = LiveRoutePlanner.estimate(from, to, apiKey)
+                                val liveMinutes = (result.travelSeconds + 59) / 60
+                                val saved = runCatching {
+                                    java.time.LocalDateTime.parse(arrival.trim())
+                                        .atZone(java.time.ZoneId.systemDefault())
+                                        .toInstant().toEpochMilli()
+                                }.getOrNull()
+                                val departure = saved?.let {
+                                    java.time.Instant.ofEpochMilli(LiveRoutePlanner.leaveByMillis(
+                                        it, result.travelSeconds, buffer.coerceIn(0, 120)))
+                                        .atZone(java.time.ZoneId.systemDefault()).toLocalDateTime()
+                                }
+                                routeResult = "Live traffic-aware estimate: " + liveMinutes + " min, " +
+                                    result.distanceMeters / 1000.0 + " km." +
+                                    (if (departure == null) "" else " Suggested departure: " + departure) +
+                                    " · " + result.advisory
+                            } catch (e: Exception) {
+                                routeResult = "Could not calculate live route: " +
+                                    (e.message ?: "Unknown error").take(180)
+                            }
+                        }
+                    },
                     remote = { endpoint, key, model, question ->
                         lifecycleScope.launch {
                             try { cloudResult = "Requesting consented remote completion..."
@@ -230,6 +257,8 @@ private fun IntegrationsScreen(
     agentReminders: Boolean, toggleReminders: (Boolean) -> Unit,
     voice: () -> Unit, askOffline: (String) -> Unit,
     route: (String) -> Unit,
+    routeResult: String,
+    estimateRoute: (String, String, String, String, Int) -> Unit,
     remote: (String, String, String, String) -> Unit
 ) {
     var title by remember { mutableStateOf("") }
@@ -237,6 +266,10 @@ private fun IntegrationsScreen(
     var category by remember { mutableStateOf("NOTE") }
     var due by remember { mutableStateOf("") }
     var destination by remember { mutableStateOf("") }
+    var origin by remember { mutableStateOf("") }
+    var routesApiKey by remember { mutableStateOf("") }
+    var arrival by remember { mutableStateOf("") }
+    var routeBuffer by remember { mutableIntStateOf(10) }
     var notificationPackage by remember { mutableStateOf("") }
     var captureNotifications by remember { mutableStateOf(false) }
     var endpoint by remember { mutableStateOf("") }
@@ -403,6 +436,25 @@ private fun IntegrationsScreen(
                 label = { Text("Destination for external Maps directions") },
                 modifier = Modifier.fillMaxWidth())
             OutlinedButton(onClick = { route(destination) }) { Text("Open Google Maps directions") }
+            OutlinedTextField(value = origin, onValueChange = { origin = it.take(180) },
+                label = { Text("Origin for live route") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = routesApiKey, onValueChange = { routesApiKey = it.take(1024) },
+                label = { Text("Google Routes API key (not saved)") },
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = arrival, onValueChange = { arrival = it.take(19) },
+                label = { Text("Optional arrival YYYY-MM-DDTHH:MM") },
+                modifier = Modifier.fillMaxWidth())
+            Text("Arrival buffer: " + routeBuffer + " minutes")
+            Slider(value = routeBuffer.toFloat(), onValueChange = { routeBuffer = it.toInt() },
+                valueRange = 0f..60f, steps = 59)
+            Button(onClick = { estimateRoute(origin, destination, routesApiKey, arrival, routeBuffer) },
+                enabled = origin.isNotBlank() && destination.isNotBlank() && routesApiKey.isNotBlank()) {
+                Text("Calculate traffic-aware route")
+            }
+            if (routeResult.isNotBlank()) Text(routeResult, style = MaterialTheme.typography.bodySmall)
+            Text("Live route uses Google Routes API only after you tap Calculate. Address details leave your phone; a user-provided API key with Routes API and billing enabled is required.",
+                style = MaterialTheme.typography.bodySmall)
         }
 
         IntegrationCard("8 · Career & learning companion",
